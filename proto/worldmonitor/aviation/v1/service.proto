@@ -59,7 +59,7 @@ service AviationService {
   }
 
   // TrackAircraft retrieves live position stream for a specific aircraft hex.
-  rpc TrackAircraft(TrackAircraftRequest) returns (stream TrackAircraftResponse) {
+  rpc TrackAircraft(TrackAircraftRequest) returns (TrackAircraftResponse) {
     option (sebuf.http.config) = {
       path: "/track-aircraft"
       method: HTTP_METHOD_GET

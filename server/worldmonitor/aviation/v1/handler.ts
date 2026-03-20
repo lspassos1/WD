@@ -8,6 +8,7 @@ import { getFlightStatus } from './get-flight-status';
 import { trackAircraft } from './track-aircraft';
 import { searchFlightPrices } from './search-flight-prices';
 import { listAviationNews } from './list-aviation-news';
+import { getYoutubeLiveStreamInfo } from './get-youtube-live-stream-info';
 
 export const aviationHandler: AviationServiceHandler = {
   listAirportDelays,
@@ -18,7 +19,5 @@ export const aviationHandler: AviationServiceHandler = {
   trackAircraft,
   searchFlightPrices,
   listAviationNews,
-  getYoutubeLiveStreamInfo: async (_ctx, _req) => ({
-    videoId: '', isLive: false, channelExists: false, channelName: '', hlsUrl: '', title: '', error: '',
-  }),
+  getYoutubeLiveStreamInfo,
 };

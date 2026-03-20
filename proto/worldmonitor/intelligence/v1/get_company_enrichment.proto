@@ -20,7 +20,7 @@ message GetCompanyEnrichmentResponse {
   repeated HNMention hacker_news_mentions = 5;
   
   // Unix timestamp in milliseconds when this data was fetched.
-  int64 enriched_at_ms = 6;
+  int64 enriched_at_ms = 6 [(sebuf.http.int64_encoding) = INT64_ENCODING_NUMBER];
   
   // List of sources successfully reached (e.g. "github", "sec_edgar").
   repeated string sources = 7;
@@ -65,5 +65,5 @@ message HNMention {
   int32 comments = 4;
   
   // Unix timestamp in milliseconds when the post was created.
-  int64 created_at_ms = 5;
+  int64 created_at_ms = 5 [(sebuf.http.int64_encoding) = INT64_ENCODING_NUMBER];
 }

@@ -121,6 +121,7 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/research/v1/list-hackernews-items': 'slow',
   '/api/intelligence/v1/get-risk-scores': 'slow',
   '/api/intelligence/v1/get-pizzint-status': 'slow',
+  '/api/intelligence/v1/classify-event': 'static',
   '/api/intelligence/v1/search-gdelt-documents': 'slow',
   '/api/infrastructure/v1/get-cable-health': 'slow',
   '/api/positive-events/v1/list-positive-geo-events': 'slow',

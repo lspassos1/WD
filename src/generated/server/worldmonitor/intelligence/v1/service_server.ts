@@ -207,7 +207,7 @@ export interface ListOrefAlertsResponse {
   history: OrefWave[];
   historyCount24h: number;
   totalHistoryCount: number;
-  timestampMs: string;
+  timestampMs: number;
   error: string;
 }
 
@@ -217,12 +217,12 @@ export interface OrefAlert {
   title: string;
   data: string[];
   desc: string;
-  timestampMs: string;
+  timestampMs: number;
 }
 
 export interface OrefWave {
   alerts: OrefAlert[];
-  timestampMs: string;
+  timestampMs: number;
 }
 
 export interface ListTelegramFeedRequest {
@@ -243,7 +243,7 @@ export interface TelegramMessage {
   channelId: string;
   channelName: string;
   text: string;
-  timestampMs: string;
+  timestampMs: number;
   mediaUrls: string[];
   sourceUrl: string;
   topic: string;
@@ -260,7 +260,7 @@ export interface GetCompanyEnrichmentResponse {
   techStack: TechStackItem[];
   secFilings?: SecFilings;
   hackerNewsMentions: HNMention[];
-  enrichedAtMs: string;
+  enrichedAtMs: number;
   sources: string[];
 }
 
@@ -301,7 +301,7 @@ export interface HNMention {
   url: string;
   points: number;
   comments: number;
-  createdAtMs: string;
+  createdAtMs: number;
 }
 
 export interface ListCompanySignalsRequest {
@@ -314,7 +314,7 @@ export interface ListCompanySignalsResponse {
   domain: string;
   signals: CompanySignal[];
   summary?: SignalSummary;
-  discoveredAtMs: string;
+  discoveredAtMs: number;
 }
 
 export interface CompanySignal {
@@ -323,7 +323,7 @@ export interface CompanySignal {
   url: string;
   source: string;
   sourceTier: number;
-  timestampMs: string;
+  timestampMs: number;
   strength: string;
   engagement?: SignalEngagement;
 }
@@ -386,7 +386,7 @@ export type DataFreshness = "DATA_FRESHNESS_UNSPECIFIED" | "DATA_FRESHNESS_FRESH
 
 export type InterferenceLevel = "INTERFERENCE_LEVEL_UNSPECIFIED" | "INTERFERENCE_LEVEL_LOW" | "INTERFERENCE_LEVEL_MEDIUM" | "INTERFERENCE_LEVEL_HIGH";
 
-export type Mode = "MODE_ALERTS" | "MODE_HISTORY";
+export type Mode = "MODE_UNSPECIFIED" | "MODE_HISTORY";
 
 export interface FieldViolation {
   field: string;
@@ -549,12 +549,19 @@ export function createIntelligenceServiceRoutes(
       },
     },
     {
-      method: "POST",
+      method: "GET",
       path: "/api/intelligence/v1/classify-event",
       handler: async (req: Request): Promise<Response> => {
         try {
           const pathParams: Record<string, string> = {};
-          const body = await req.json() as ClassifyEventRequest;
+          const url = new URL(req.url, "http://localhost");
+          const params = url.searchParams;
+          const body: ClassifyEventRequest = {
+            title: params.get("title") ?? "",
+            description: params.get("description") ?? "",
+            source: params.get("source") ?? "",
+            country: params.get("country") ?? "",
+          };
           if (options?.validateRequest) {
             const bodyViolations = options.validateRequest("classifyEvent", body);
             if (bodyViolations) {

@@ -39,7 +39,7 @@ service IntelligenceService {
 
   // ClassifyEvent analyzes a news event using AI models.
   rpc ClassifyEvent(ClassifyEventRequest) returns (ClassifyEventResponse) {
-    option (sebuf.http.config) = {path: "/classify-event"};
+    option (sebuf.http.config) = {path: "/classify-event", method: HTTP_METHOD_GET};
   }
 
   // GetCountryIntelBrief generates a strategic brief for a specific country.

@@ -2,7 +2,6 @@ syntax = "proto3";
 package worldmonitor.intelligence.v1;
 
 import "buf/validate/validate.proto";
-import "sebuf/http/annotations.proto";
 
 // Satellite represents an orbital asset tracked by WorldMonitor.
 message Satellite {

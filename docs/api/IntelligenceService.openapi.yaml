@@ -70,7 +70,7 @@ paths:
                             schema:
                                 $ref: '#/components/schemas/Error'
     /api/intelligence/v1/classify-event:
-        post:
+        get:
             tags:
                 - IntelligenceService
             summary: ClassifyEvent
@@ -101,12 +101,6 @@ paths:
                   required: false
                   schema:
                     type: string
-            requestBody:
-                content:
-                    application/json:
-                        schema:
-                            $ref: '#/components/schemas/ClassifyEventRequest'
-                required: true
             responses:
                 "200":
                     description: Successful response
@@ -327,7 +321,7 @@ paths:
             parameters:
                 - name: mode
                   in: query
-                  description: 'Mode selection: either active alerts or history waves.'
+                  description: Mode selection. MODE_UNSPECIFIED defaults to active alerts.
                   required: false
                   schema:
                     type: string
@@ -1143,7 +1137,7 @@ components:
                 mode:
                     type: string
                     enum:
-                        - MODE_ALERTS
+                        - MODE_UNSPECIFIED
                         - MODE_HISTORY
             description: Request to fetch Israeli Red Alerts (OREF).
         ListOrefAlertsResponse:
@@ -1169,9 +1163,9 @@ components:
                     format: int32
                     description: Total alerts in the historical buffer.
                 timestampMs:
-                    type: string
+                    type: integer
                     format: int64
-                    description: Unix timestamp in milliseconds of the response generation.
+                    description: 'Unix timestamp in milliseconds of the response generation.. Warning: Values > 2^53 may lose precision in JavaScript'
                 error:
                     type: string
                     description: Optional error message from the relay.
@@ -1192,9 +1186,9 @@ components:
                 desc:
                     type: string
                 timestampMs:
-                    type: string
+                    type: integer
                     format: int64
-                    description: Unix timestamp in milliseconds for when the alert was issued.
+                    description: 'Unix timestamp in milliseconds for when the alert was issued.. Warning: Values > 2^53 may lose precision in JavaScript'
             description: A single Red Alert event.
         OrefWave:
             type: object
@@ -1204,9 +1198,9 @@ components:
                     items:
                         $ref: '#/components/schemas/OrefAlert'
                 timestampMs:
-                    type: string
+                    type: integer
                     format: int64
-                    description: Unix timestamp in milliseconds for this wave.
+                    description: 'Unix timestamp in milliseconds for this wave.. Warning: Values > 2^53 may lose precision in JavaScript'
             description: A wave of alerts occurring at the same time.
         ListTelegramFeedRequest:
             type: object
@@ -1256,9 +1250,9 @@ components:
                     type: string
                     description: Sanitized message content.
                 timestampMs:
-                    type: string
+                    type: integer
                     format: int64
-                    description: Unix timestamp in milliseconds for when the message was posted.
+                    description: 'Unix timestamp in milliseconds for when the message was posted.. Warning: Values > 2^53 may lose precision in JavaScript'
                 mediaUrls:
                     type: array
                     items:
@@ -1299,9 +1293,9 @@ components:
                     items:
                         $ref: '#/components/schemas/HNMention'
                 enrichedAtMs:
-                    type: string
+                    type: integer
                     format: int64
-                    description: Unix timestamp in milliseconds when this data was fetched.
+                    description: 'Unix timestamp in milliseconds when this data was fetched.. Warning: Values > 2^53 may lose precision in JavaScript'
                 sources:
                     type: array
                     items:
@@ -1378,9 +1372,9 @@ components:
                     type: integer
                     format: int32
                 createdAtMs:
-                    type: string
+                    type: integer
                     format: int64
-                    description: Unix timestamp in milliseconds when the post was created.
+                    description: 'Unix timestamp in milliseconds when the post was created.. Warning: Values > 2^53 may lose precision in JavaScript'
         ListCompanySignalsRequest:
             type: object
             properties:
@@ -1403,9 +1397,9 @@ components:
                 summary:
                     $ref: '#/components/schemas/SignalSummary'
                 discoveredAtMs:
-                    type: string
+                    type: integer
                     format: int64
-                    description: Unix timestamp in milliseconds when signals were discovered.
+                    description: 'Unix timestamp in milliseconds when signals were discovered.. Warning: Values > 2^53 may lose precision in JavaScript'
             description: Discovered company signals with classification and engagement metrics.
         CompanySignal:
             type: object
@@ -1424,9 +1418,9 @@ components:
                     format: int32
                     description: Data quality tier (1 is authoritative, 5 is low confidence).
                 timestampMs:
-                    type: string
+                    type: integer
                     format: int64
-                    description: Unix timestamp in milliseconds of the event occurrence.
+                    description: 'Unix timestamp in milliseconds of the event occurrence.. Warning: Values > 2^53 may lose precision in JavaScript'
                 strength:
                     type: string
                     description: Qualitative strength of the signal (e.g. "Strong", "Emerging").

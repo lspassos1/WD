@@ -38,7 +38,7 @@ message TelegramMessage {
   string text = 4;
   
   // Unix timestamp in milliseconds for when the message was posted.
-  int64 timestamp_ms = 5;
+  int64 timestamp_ms = 5 [(sebuf.http.int64_encoding) = INT64_ENCODING_NUMBER];
   
   // Direct links to associated media (images, videos).
   repeated string media_urls = 6;

@@ -18,7 +18,7 @@ message ListCompanySignalsResponse {
   SignalSummary summary = 4;
   
   // Unix timestamp in milliseconds when signals were discovered.
-  int64 discovered_at_ms = 5;
+  int64 discovered_at_ms = 5 [(sebuf.http.int64_encoding) = INT64_ENCODING_NUMBER];
 }
 
 message CompanySignal {
@@ -32,7 +32,7 @@ message CompanySignal {
   int32 source_tier = 5;
   
   // Unix timestamp in milliseconds of the event occurrence.
-  int64 timestamp_ms = 6;
+  int64 timestamp_ms = 6 [(sebuf.http.int64_encoding) = INT64_ENCODING_NUMBER];
   
   // Qualitative strength of the signal (e.g. "Strong", "Emerging").
   string strength = 7;
