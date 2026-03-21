@@ -86,23 +86,6 @@ function parseIsoMs(value: string | undefined): number {
   return Number.isFinite(ms) ? ms : 0;
 }
 
-function buildEmptyResponse(name = '', domain = ''): GetCompanyEnrichmentResponse {
-  return {
-    company: {
-      name,
-      domain,
-      description: '',
-      location: '',
-      website: domain ? `https://${domain}` : '',
-      founded: 0,
-    },
-    techStack: [],
-    hackerNewsMentions: [],
-    enrichedAtMs: Date.now(),
-    sources: [],
-  };
-}
-
 async function fetchGitHubOrg(name: string) {
   const data = await fetchJson<GitHubOrg>(`https://api.github.com/orgs/${encodeURIComponent(name)}`);
   if (!data) return null;
@@ -175,7 +158,7 @@ export async function getCompanyEnrichment(
   const name = req.name?.trim();
 
   if (!domain && !name) {
-    throw new ValidationError([{ field: 'domain', message: 'Provide domain or name' }]);
+    throw new ValidationError([{ field: 'domain', description: 'Provide domain or name' }]);
   }
 
   const companyName = name || (domain ? inferFromDomain(domain).inferredName : 'Unknown');

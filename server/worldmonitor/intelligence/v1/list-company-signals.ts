@@ -85,20 +85,6 @@ function slugFromDomain(domain: string): string {
   return domain.replace(/\.(com|io|co|org|net|ai|dev|app)$/, '').split('.').pop() || domain;
 }
 
-function buildEmptyResponse(company = '', domain = ''): ListCompanySignalsResponse {
-  return {
-    company,
-    domain,
-    signals: [],
-    summary: {
-      totalSignals: 0,
-      byType: {},
-      signalDiversity: 0,
-    },
-    discoveredAtMs: Date.now(),
-  };
-}
-
 async function fetchHNSignals(companyName: string): Promise<CompanySignal[]> {
   const thirtyDaysAgo = Math.floor(Date.now() / 1000) - 30 * 86400;
   const data = await fetchJson<HNAlgoliaSignalResponse>(
@@ -198,7 +184,7 @@ export async function listCompanySignals(
   const domain = req.domain?.trim().toLowerCase();
 
   if (!company) {
-    throw new ValidationError([{ field: 'company', message: 'company is required' }]);
+    throw new ValidationError([{ field: 'company', description: 'company is required' }]);
   }
 
   const orgName = domain ? slugFromDomain(domain) : company.toLowerCase().replace(/\s+/g, '');
