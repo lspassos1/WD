@@ -5,9 +5,12 @@ import type {
   ListOrefAlertsResponse,
   OrefAlert,
 } from '../../../../src/generated/server/worldmonitor/intelligence/v1/service_server';
+import { getCachedJson } from '../../../_shared/redis';
 import { getRelayBaseUrl, getRelayHeaders } from './_relay';
 
-interface RelayOrefAlert {
+const REDIS_KEY = 'relay:oref:history:v1';
+
+interface CachedOrefAlert {
   id?: string | number;
   cat?: string;
   title?: string;
@@ -16,15 +19,22 @@ interface RelayOrefAlert {
   alertDate?: string;
 }
 
-interface RelayOrefWave {
-  alerts?: RelayOrefAlert[];
+interface CachedOrefWave {
+  alerts?: CachedOrefAlert[];
   timestamp?: string;
 }
 
-interface RelayOrefResponse {
+interface CachedOrefPayload {
+  history?: CachedOrefWave[];
+  historyCount24h?: number;
+  totalHistoryCount?: number;
+  activeAlertCount?: number;
+  persistedAt?: string;
+}
+
+interface RelayAlertsResponse {
   configured?: boolean;
-  alerts?: RelayOrefAlert[];
-  history?: RelayOrefWave[];
+  alerts?: CachedOrefAlert[];
   historyCount24h?: number;
   totalHistoryCount?: number;
   timestamp?: string;
@@ -49,7 +59,7 @@ function emptyResponse(error: string): ListOrefAlertsResponse {
   };
 }
 
-function mapAlert(alert: RelayOrefAlert): OrefAlert {
+function mapAlert(alert: CachedOrefAlert): OrefAlert {
   return {
     id: String(alert.id || ''),
     cat: String(alert.cat || ''),
@@ -61,43 +71,70 @@ function mapAlert(alert: RelayOrefAlert): OrefAlert {
 }
 
 /**
- * ListOrefAlerts fetches Israeli Red Alerts from the Home Front Command relay.
+ * ListOrefAlerts reads OREF history from Redis (seeded by ais-relay).
+ * For live alerts (MODE_ALERTS), falls back to relay when available.
  */
 export const listOrefAlerts: IntelligenceServiceHandler['listOrefAlerts'] = async (
   _ctx: ServerContext,
   req: ListOrefAlertsRequest,
 ): Promise<ListOrefAlertsResponse> => {
-  const relayBaseUrl = getRelayBaseUrl();
-  if (!relayBaseUrl) {
-    return emptyResponse('WS_RELAY_URL not configured');
-  }
+  const cached = (await getCachedJson(REDIS_KEY, true)) as CachedOrefPayload | null;
 
-  const endpoint = req.mode === 'MODE_HISTORY' ? '/oref/history' : '/oref/alerts';
-  const url = `${relayBaseUrl}${endpoint}`;
-
-  try {
-    const response = await fetch(url, {
-      headers: getRelayHeaders(),
-      signal: AbortSignal.timeout(15_000),
-    });
-    if (!response.ok) {
-      return emptyResponse(`Relay HTTP ${response.status}`);
-    }
-
-    const data = (await response.json()) as RelayOrefResponse;
+  // History mode: serve entirely from Redis (relay persists history here)
+  if (req.mode === 'MODE_HISTORY') {
+    if (!cached) return emptyResponse('No OREF history in cache');
     return {
-      configured: data.configured ?? false,
-      alerts: (data.alerts || []).map(mapAlert),
-      history: (data.history || []).map((wave) => ({
+      configured: true,
+      alerts: [],
+      history: (cached.history || []).map((wave) => ({
         alerts: (wave.alerts || []).map(mapAlert),
         timestampMs: toEpochMs(wave.timestamp),
       })),
-      historyCount24h: data.historyCount24h || 0,
-      totalHistoryCount: data.totalHistoryCount || 0,
-      timestampMs: toEpochMs(data.timestamp) || Date.now(),
-      error: data.error || '',
+      historyCount24h: cached.historyCount24h || 0,
+      totalHistoryCount: cached.totalHistoryCount || 0,
+      timestampMs: toEpochMs(cached.persistedAt) || Date.now(),
+      error: '',
     };
-  } catch (error) {
-    return emptyResponse(String(error));
   }
+
+  // Live alerts: relay holds current alerts in-memory; Redis has none.
+  // Try relay, fall back to Redis counts with empty alerts.
+  const relayBaseUrl = getRelayBaseUrl();
+  if (relayBaseUrl) {
+    try {
+      const response = await fetch(`${relayBaseUrl}/oref/alerts`, {
+        headers: getRelayHeaders(),
+        signal: AbortSignal.timeout(10_000),
+      });
+      if (response.ok) {
+        const data = (await response.json()) as RelayAlertsResponse;
+        return {
+          configured: data.configured ?? true,
+          alerts: (data.alerts || []).map(mapAlert),
+          history: [],
+          historyCount24h: data.historyCount24h ?? cached?.historyCount24h ?? 0,
+          totalHistoryCount: data.totalHistoryCount ?? cached?.totalHistoryCount ?? 0,
+          timestampMs: toEpochMs(data.timestamp) || Date.now(),
+          error: data.error || '',
+        };
+      }
+    } catch {
+      // fall through to Redis fallback
+    }
+  }
+
+  // Relay unavailable: return Redis counts, no active alerts
+  if (cached) {
+    return {
+      configured: true,
+      alerts: [],
+      history: [],
+      historyCount24h: cached.historyCount24h || 0,
+      totalHistoryCount: cached.totalHistoryCount || 0,
+      timestampMs: toEpochMs(cached.persistedAt) || Date.now(),
+      error: 'relay unavailable',
+    };
+  }
+
+  return emptyResponse('No relay or cache available');
 };
