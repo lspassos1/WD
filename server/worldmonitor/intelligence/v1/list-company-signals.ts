@@ -10,6 +10,7 @@ import type {
   ListCompanySignalsResponse,
   CompanySignal,
 } from '../../../../src/generated/server/worldmonitor/intelligence/v1/service_server';
+import { ValidationError } from '../../../../src/generated/server/worldmonitor/intelligence/v1/service_server';
 import { fetchJson } from '../../../_shared/fetch-json';
 
 interface HNAlgoliaSignalHit {
@@ -197,7 +198,7 @@ export async function listCompanySignals(
   const domain = req.domain?.trim().toLowerCase();
 
   if (!company) {
-    return buildEmptyResponse('', domain || '');
+    throw new ValidationError([{ field: 'company', message: 'company is required' }]);
   }
 
   const orgName = domain ? slugFromDomain(domain) : company.toLowerCase().replace(/\s+/g, '');

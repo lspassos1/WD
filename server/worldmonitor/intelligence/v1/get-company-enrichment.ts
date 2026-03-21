@@ -9,6 +9,7 @@ import type {
   GetCompanyEnrichmentRequest,
   GetCompanyEnrichmentResponse,
 } from '../../../../src/generated/server/worldmonitor/intelligence/v1/service_server';
+import { ValidationError } from '../../../../src/generated/server/worldmonitor/intelligence/v1/service_server';
 import { fetchJson } from '../../../_shared/fetch-json';
 
 interface GitHubOrg {
@@ -174,7 +175,7 @@ export async function getCompanyEnrichment(
   const name = req.name?.trim();
 
   if (!domain && !name) {
-    return buildEmptyResponse();
+    throw new ValidationError([{ field: 'domain', message: 'Provide domain or name' }]);
   }
 
   const companyName = name || (domain ? inferFromDomain(domain).inferredName : 'Unknown');

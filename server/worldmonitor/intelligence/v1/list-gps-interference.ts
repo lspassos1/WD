@@ -115,13 +115,20 @@ export const listGpsInterference: IntelligenceServiceHandler['listGpsInterferenc
     : data.hexes;
 
   const hexes = filtered.map(normalizeHex);
+  const stats = regionFilter
+    ? {
+        totalHexes: hexes.length,
+        highCount: hexes.filter((hex) => hex.level === 'INTERFERENCE_LEVEL_HIGH').length,
+        mediumCount: hexes.filter((hex) => hex.level === 'INTERFERENCE_LEVEL_MEDIUM').length,
+      }
+    : {
+        totalHexes: toNumber(data.stats?.totalHexes || hexes.length),
+        highCount: toNumber(data.stats?.highCount || hexes.filter((hex) => hex.level === 'INTERFERENCE_LEVEL_HIGH').length),
+        mediumCount: toNumber(data.stats?.mediumCount || hexes.filter((hex) => hex.level === 'INTERFERENCE_LEVEL_MEDIUM').length),
+      };
   return {
     hexes,
-    stats: {
-      totalHexes: toNumber(data.stats?.totalHexes || hexes.length),
-      highCount: toNumber(data.stats?.highCount || hexes.filter((hex) => hex.level === 'INTERFERENCE_LEVEL_HIGH').length),
-      mediumCount: toNumber(data.stats?.mediumCount || hexes.filter((hex) => hex.level === 'INTERFERENCE_LEVEL_MEDIUM').length),
-    },
+    stats,
     source: data.source || 'gpsjam.org',
     fetchedAt: toFetchedAt(data.fetchedAt),
   };
