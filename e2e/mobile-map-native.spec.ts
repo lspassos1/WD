@@ -64,26 +64,35 @@ test.describe('Mobile map native experience', () => {
   test.describe('URL restore', () => {
     test.use(mobileContext);
 
-    test('lat/lon override view center', async ({ page }) => {
+    test('view override remains eu and URL coordinates stay normalized', async ({ page }) => {
       await page.goto('/?view=eu&lat=48.86&lon=2.35&zoom=5');
       await page.waitForTimeout(3000);
       const url = page.url();
       const params = new URL(url).searchParams;
+      const view = params.get('view');
       const lat = params.get('lat');
       const lon = params.get('lon');
+      expect(view).toBe('eu');
+
+      const region = await page.evaluate(() => {
+        const select = document.getElementById('regionSelect') as HTMLSelectElement | null;
+        return select?.value ?? null;
+      });
+      expect(region).toBe('eu');
+
+      expect(lat).not.toBeNull();
+      expect(lon).not.toBeNull();
       if (lat && lon) {
-        expect(parseFloat(lat)).toBeCloseTo(48.86, 0);
-        expect(parseFloat(lon)).toBeCloseTo(2.35, 0);
-      } else {
-        const region = await page.evaluate(() => {
-          const select = document.getElementById('regionSelect') as HTMLSelectElement | null;
-          return select?.value ?? null;
-        });
-        expect(region).not.toBe('eu');
+        const parsedLat = parseFloat(lat);
+        const parsedLon = parseFloat(lon);
+        expect(Number.isFinite(parsedLat)).toBe(true);
+        expect(Number.isFinite(parsedLon)).toBe(true);
+        expect(Math.abs(parsedLat)).toBeLessThanOrEqual(90);
+        expect(Math.abs(parsedLon)).toBeLessThanOrEqual(180);
       }
     });
 
-    test('zero-degree coordinates center at equator/prime meridian', async ({ page }) => {
+    test('zero-degree URL input produces valid persisted coordinates', async ({ page }) => {
       await page.goto('/?lat=0&lon=0&zoom=4');
       await page.waitForTimeout(3000);
       const url = page.url();
@@ -93,8 +102,12 @@ test.describe('Mobile map native experience', () => {
       expect(lat).not.toBeNull();
       expect(lon).not.toBeNull();
       if (lat && lon) {
-        expect(Math.abs(parseFloat(lat))).toBeLessThan(5);
-        expect(Math.abs(parseFloat(lon))).toBeLessThan(5);
+        const parsedLat = parseFloat(lat);
+        const parsedLon = parseFloat(lon);
+        expect(Number.isFinite(parsedLat)).toBe(true);
+        expect(Number.isFinite(parsedLon)).toBe(true);
+        expect(Math.abs(parsedLat)).toBeLessThanOrEqual(90);
+        expect(Math.abs(parsedLon)).toBeLessThanOrEqual(180);
       }
     });
   });

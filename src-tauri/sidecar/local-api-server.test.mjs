@@ -499,7 +499,7 @@ test('returns local handler error when fetch(Request) uses a consumed body', asy
   }
 });
 
-test('strips browser origin headers when proxying to cloud fallback (cloudFallback enabled)', async () => {
+test('replaces browser origin with trusted sidecar origin when proxying to cloud fallback', async () => {
   const remote = await setupRemoteServer();
   const localApi = await setupApiDir({});
 
@@ -519,8 +519,8 @@ test('strips browser origin headers when proxying to cloud fallback (cloudFallba
     assert.equal(response.status, 200);
     const body = await response.json();
     assert.equal(body.source, 'remote');
-    assert.equal(body.origin, null);
-    assert.equal(remote.origins[0], null);
+    assert.equal(body.origin, 'https://worldmonitor.app');
+    assert.equal(remote.origins[0], 'https://worldmonitor.app');
   } finally {
     await app.close();
     await localApi.cleanup();

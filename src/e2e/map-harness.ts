@@ -282,6 +282,31 @@ const internals = map as unknown as {
   stopPulseAnimation?: () => void;
 };
 
+const mapWithPrivate = map as unknown as {
+  fetchServerBases?: () => void;
+  serverBasesLoaded?: boolean;
+  serverBases?: unknown[];
+  serverBaseClusters?: unknown[];
+};
+
+const canonicalizeLayerId = (id: string): string => {
+  if (id === 'conflict-zones-layer-country-geometry') {
+    return 'conflict-zones-layer';
+  }
+  return id;
+};
+
+const disableRemoteBasesForHarness = (): void => {
+  if (typeof mapWithPrivate.fetchServerBases === 'function') {
+    mapWithPrivate.fetchServerBases = () => {};
+  }
+  mapWithPrivate.serverBasesLoaded = false;
+  mapWithPrivate.serverBases = [];
+  mapWithPrivate.serverBaseClusters = [];
+};
+
+disableRemoteBasesForHarness();
+
 const buildLayerState = (enabledLayers: HarnessLayerKey[]): MapLayers => {
   const next: MapLayers = { ...allLayersDisabled };
   for (const key of enabledLayers) {
@@ -329,10 +354,15 @@ const getDataCount = (data: unknown): number => {
 
 const getDeckLayerSnapshot = (): LayerSnapshot[] => {
   const layers = internals.buildLayers?.() ?? [];
-  return layers.map((layer) => ({
-    id: layer.id,
-    dataCount: getDataCount(layer.props?.data),
-  }));
+  const byLayerId = new Map<string, number>();
+  for (const layer of layers) {
+    const canonicalId = canonicalizeLayerId(layer.id);
+    const dataCount = getDataCount(layer.props?.data);
+    const previousCount = byLayerId.get(canonicalId) ?? 0;
+    byLayerId.set(canonicalId, Math.max(previousCount, dataCount));
+  }
+
+  return Array.from(byLayerId.entries()).map(([id, dataCount]) => ({ id, dataCount }));
 };
 
 const getLayerDataCount = (layerId: string): number => {
@@ -830,6 +860,8 @@ const buildHotspotActivityNews = (
 };
 
 const seedAllDynamicData = (): void => {
+  disableRemoteBasesForHarness();
+
   const earthquakes: Earthquake[] = [
     {
       id: 'e2e-eq-1',
