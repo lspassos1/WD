@@ -77,7 +77,8 @@ const SOURCE_METADATA: Record<DataSourceId, { name: string; requiredForRisk: boo
   sanctions_pressure: { name: 'Sanctions Pressure', requiredForRisk: false, panelId: 'sanctions-pressure' },
   radiation: { name: 'Radiation Watch', requiredForRisk: false, panelId: 'radiation-watch' },
   gpsjam: { name: 'GPS/GNSS Interference', requiredForRisk: false, panelId: 'map' },
-  treasury_revenue: { name: 'Treasury Customs Revenue', requiredForRisk: false, panelId: 'trade-policy' },
+  treasury_revenue: { name: 'US Treasury customs revenue', requiredForRisk: false, panelId: 'trade-policy' },
+  forecasts: { name: 'Strategic Forecasts', requiredForRisk: false, panelId: 'forecast' },
 };
 
 class DataFreshnessTracker {
@@ -341,6 +342,7 @@ const INTELLIGENCE_GAP_MESSAGES: Record<DataSourceId, string> = {
   radiation: 'Radiation monitoring degraded—EPA RadNet and Safecast observations unavailable',
   gpsjam: 'GPS/GNSS interference data unavailable—jamming zones undetected',
   treasury_revenue: 'US Treasury customs revenue data unavailable',
+  forecasts: 'Strategic forecasts unavailable\u2014future scenario visibility reduced',
 };
 
 /**

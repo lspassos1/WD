@@ -2559,6 +2559,7 @@
     "error": "Error",
     "noData": "No data available",
     "noDataAvailable": "No data available",
+    "noEarningsData": "No earnings reports found for this period",
     "updated": "Updated just now",
     "ago": "{{time}} ago",
     "retrying": "Retrying...",
@@ -2683,3 +2684,4 @@
     "or": "or enter a custom server"
   }
 }
+

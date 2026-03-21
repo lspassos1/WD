@@ -14,13 +14,13 @@ import { haversineDistanceKm } from '@/services/related-assets';
 import type {
   CountryBriefPanel,
   CountryIntelData,
-  StockIndexData,
   CountryDeepDiveSignalDetails,
   CountryDeepDiveSignalItem,
   CountryDeepDiveMilitarySummary,
   CountryDeepDiveEconomicIndicator,
   CountryFactsData,
 } from './CountryBriefPanel';
+import type { StockIndexData } from '@/types';
 import type { MapContainer } from './MapContainer';
 
 type ThreatLevel = 'critical' | 'high' | 'medium' | 'low' | 'info';

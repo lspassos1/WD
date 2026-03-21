@@ -8,6 +8,7 @@ import { getCSSColor } from '@/utils';
 import type { CountryScore } from '@/services/country-instability';
 import type { PredictionMarket } from '@/services/prediction';
 import { toFlagEmoji } from '@/utils/country-flag';
+import type { StockIndexData } from '@/types';
 
 interface CountryIntelData {
   brief: string;
@@ -16,17 +17,6 @@ interface CountryIntelData {
   cached?: boolean;
   generatedAt?: string;
   error?: string;
-}
-
-export interface StockIndexData {
-  available: boolean;
-  code: string;
-  symbol: string;
-  indexName: string;
-  price: string;
-  weekChangePercent: string;
-  currency: string;
-  cached?: boolean;
 }
 
 interface ActiveSignals {

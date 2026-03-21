@@ -364,9 +364,9 @@ test.describe('desktop runtime routing guardrails', () => {
             invoke: async () => ({ os: 'linux', arch: 'x86_64' }),
           },
         };
-        const linuxFallback = await updaterProto.resolveUpdateDownloadUrl.call(fakeApp, releaseUrl);
+        const linuxX64 = await updaterProto.resolveUpdateDownloadUrl.call(fakeApp, releaseUrl);
 
-        return { macArm, windowsX64, linuxFallback };
+        return { macArm, windowsX64, linuxX64 };
       } finally {
         if (previousTauri === undefined) {
           delete globalWindow.__TAURI__;
@@ -378,7 +378,7 @@ test.describe('desktop runtime routing guardrails', () => {
 
     expect(result.macArm).toBe('https://worldmonitor.app/api/download?platform=macos-arm64&variant=full');
     expect(result.windowsX64).toBe('https://worldmonitor.app/api/download?platform=windows-exe&variant=full');
-    expect(result.linuxFallback).toBe('https://github.com/koala73/worldmonitor/releases/latest');
+    expect(result.linuxX64).toBe('https://worldmonitor.app/api/download?platform=linux-appimage&variant=full');
   });
 
   test('MapContainer falls back to SVG when WebGL2 is unavailable', async ({ page }) => {
@@ -562,10 +562,17 @@ test.describe('desktop runtime routing guardrails', () => {
         calls.push(url);
         const parsed = new URL(url);
 
-        // Sebuf proto: POST /api/market/v1/list-market-quotes
+        // Sebuf proto (current): GET /api/market/v1/list-market-quotes
         if (parsed.pathname === '/api/market/v1/list-market-quotes') {
           const body = init?.body ? JSON.parse(String(init.body)) : {};
-          const symbols: string[] = body.symbols || [];
+          const symbols: string[] = Array.isArray(body.symbols)
+            ? body.symbols
+            : (typeof body.symbols === 'string' && body.symbols.length > 0
+                ? body.symbols.split(',').map((s: string) => s.trim()).filter(Boolean)
+                : (parsed.searchParams.get('symbols') || '')
+                  .split(',')
+                  .map((s: string) => s.trim())
+                  .filter(Boolean));
           const quotes = symbols
             .filter((s: string) => yahooOnly.has(s))
             .map((s: string) => {
@@ -594,6 +601,7 @@ test.describe('desktop runtime routing guardrails', () => {
       }) as typeof window.fetch;
 
       const fakeApp = {
+        loadEarnings: async () => {},
         ctx: {
           latestMarkets: [] as Array<unknown>,
           panels: {
@@ -688,7 +696,7 @@ test.describe('desktop runtime routing guardrails', () => {
         const parsed = new URL(toUrl(input));
         if (parsed.pathname === '/api/conflict/v1/get-humanitarian-summary') {
           const body = init?.body ? JSON.parse(String(init.body)) : {};
-          const countryCode = String(body.countryCode || '').toUpperCase();
+          const countryCode = String(body.countryCode || parsed.searchParams.get('country_code') || '').toUpperCase();
           seenCountryCodes.add(countryCode);
           return responseJson({
             summary: {

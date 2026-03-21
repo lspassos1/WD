@@ -328,6 +328,29 @@ export interface ListOtherTokensResponse {
   tokens: CryptoQuote[];
 }
 
+export interface GetEarningsCalendarRequest {
+  timeframe: string;
+}
+
+export interface GetEarningsCalendarResponse {
+  reports: EarningsReport[];
+  finnhubSkipped: boolean;
+  skipReason: string;
+}
+
+export interface EarningsReport {
+  symbol: string;
+  title: string;
+  epsEstimate: number;
+  epsActual: number;
+  epsSurprisePercent: number;
+  revenueEstimate: number;
+  revenueActual: number;
+  revenueSurprisePercent: number;
+  reportDate: string;
+  reportTime: string;
+}
+
 export interface FieldViolation {
   field: string;
   description: string;
@@ -769,6 +792,31 @@ export class MarketServiceClient {
     }
 
     return await resp.json() as ListOtherTokensResponse;
+  }
+
+  async getEarningsCalendar(req: GetEarningsCalendarRequest, options?: MarketServiceCallOptions): Promise<GetEarningsCalendarResponse> {
+    let path = "/api/market/v1/get-earnings-calendar";
+    const params = new URLSearchParams();
+    if (req.timeframe != null && req.timeframe !== "") params.set("timeframe", String(req.timeframe));
+    const url = this.baseURL + path + (params.toString() ? "?" + params.toString() : "");
+
+    const headers: Record<string, string> = {
+      "Content-Type": "application/json",
+      ...this.defaultHeaders,
+      ...options?.headers,
+    };
+
+    const resp = await this.fetchFn(url, {
+      method: "GET",
+      headers,
+      signal: options?.signal,
+    });
+
+    if (!resp.ok) {
+      return this.handleError(resp);
+    }
+
+    return await resp.json() as GetEarningsCalendarResponse;
   }
 
   private async handleError(resp: Response): Promise<never> {

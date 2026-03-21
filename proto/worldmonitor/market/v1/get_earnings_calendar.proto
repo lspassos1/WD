@@ -1,0 +1,30 @@
+syntax = "proto3";
+
+package worldmonitor.market.v1;
+
+import "sebuf/http/annotations.proto";
+
+message EarningsReport {
+  string symbol = 1;
+  string title = 2;
+  double eps_estimate = 3;
+  double eps_actual = 4;
+  double eps_surprise_percent = 5;
+  double revenue_estimate = 6;
+  double revenue_actual = 7;
+  double revenue_surprise_percent = 8;
+  string report_date = 9;
+  string report_time = 10;
+}
+
+message GetEarningsCalendarRequest {
+  string timeframe = 1 [
+    (sebuf.http.query) = {name: "timeframe"}
+  ];
+}
+
+message GetEarningsCalendarResponse {
+  repeated EarningsReport reports = 1;
+  bool finnhub_skipped = 2;
+  string skip_reason = 3;
+}

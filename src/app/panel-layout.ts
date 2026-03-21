@@ -235,6 +235,11 @@ export class PanelLayoutManager implements AppModule {
             </button>
             <div class="download-dropdown" id="downloadDropdown"></div>
           </div>`}
+          <button class="theme-toggle-btn" id="headerThemeToggle" aria-label="${t('preferences.theme')}" title="${t('preferences.theme')}">
+            ${getCurrentTheme() === 'dark'
+        ? '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><line x1="12" y1="2" x2="12" y2="4"/><line x1="12" y1="20" x2="12" y2="22"/><line x1="4.9" y1="4.9" x2="6.3" y2="6.3"/><line x1="17.7" y1="17.7" x2="19.1" y2="19.1"/><line x1="2" y1="12" x2="4" y2="12"/><line x1="20" y1="12" x2="22" y2="12"/><line x1="4.9" y1="19.1" x2="6.3" y2="17.7"/><line x1="17.7" y1="6.3" x2="19.1" y2="4.9"/></svg>'
+        : '<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3 7 7 0 0 0 21 12.8z"/></svg>'}
+          </button>
           <button class="search-btn" id="searchBtn"><kbd>⌘K</kbd> ${t('header.search')}</button>
           ${this.ctx.isDesktopApp ? '' : `<button class="copy-link-btn" id="copyLinkBtn">${t('header.copyLink')}</button>`}
           ${this.ctx.isDesktopApp ? '' : `<button class="fullscreen-btn" id="fullscreenBtn" title="${t('header.fullscreen')}">⛶</button>`}
@@ -668,28 +673,28 @@ export class PanelLayoutManager implements AppModule {
     // Correlation engine panels
     if (this.shouldCreatePanel('military-correlation')) {
       const p = new MilitaryCorrelationPanel();
-      p.setMapNavigateHandler((lat, lon) => { this.ctx.map?.setCenter(lat, lon, 6); });
+      p.setMapNavigateHandler((lat: number, lon: number) => { this.ctx.map?.setCenter(lat, lon, 6); });
       this.ctx.panels['military-correlation'] = p;
     }
     if (this.shouldCreatePanel('escalation-correlation')) {
       const p = new EscalationCorrelationPanel();
-      p.setMapNavigateHandler((lat, lon) => { this.ctx.map?.setCenter(lat, lon, 4); });
+      p.setMapNavigateHandler((lat: number, lon: number) => { this.ctx.map?.setCenter(lat, lon, 4); });
       this.ctx.panels['escalation-correlation'] = p;
     }
     if (this.shouldCreatePanel('economic-correlation')) {
       const p = new EconomicCorrelationPanel();
-      p.setMapNavigateHandler((lat, lon) => { this.ctx.map?.setCenter(lat, lon, 4); });
+      p.setMapNavigateHandler((lat: number, lon: number) => { this.ctx.map?.setCenter(lat, lon, 4); });
       this.ctx.panels['economic-correlation'] = p;
     }
     if (this.shouldCreatePanel('disaster-correlation')) {
       const p = new DisasterCorrelationPanel();
-      p.setMapNavigateHandler((lat, lon) => { this.ctx.map?.setCenter(lat, lon, 5); });
+      p.setMapNavigateHandler((lat: number, lon: number) => { this.ctx.map?.setCenter(lat, lon, 5); });
       this.ctx.panels['disaster-correlation'] = p;
     }
 
     if (this.shouldCreatePanel('strategic-risk')) {
       const strategicRiskPanel = new StrategicRiskPanel();
-      strategicRiskPanel.setLocationClickHandler((lat, lon) => {
+      strategicRiskPanel.setLocationClickHandler((lat: number, lon: number) => {
         this.ctx.map?.setCenter(lat, lon, 4);
       });
       this.ctx.panels['strategic-risk'] = strategicRiskPanel;
@@ -697,7 +702,7 @@ export class PanelLayoutManager implements AppModule {
 
     if (this.shouldCreatePanel('strategic-posture')) {
       const strategicPosturePanel = new StrategicPosturePanel(() => this.ctx.allNews);
-      strategicPosturePanel.setLocationClickHandler((lat, lon) => {
+      strategicPosturePanel.setLocationClickHandler((lat: number, lon: number) => {
         console.log('[App] StrategicPosture handler called:', { lat, lon, hasMap: !!this.ctx.map });
         this.ctx.map?.setCenter(lat, lon, 4);
       });
@@ -706,7 +711,7 @@ export class PanelLayoutManager implements AppModule {
 
     if (this.shouldCreatePanel('ucdp-events')) {
       const ucdpEventsPanel = new UcdpEventsPanel();
-      ucdpEventsPanel.setEventClickHandler((lat, lon) => {
+      ucdpEventsPanel.setEventClickHandler((lat: number, lon: number) => {
         this.ctx.map?.setCenter(lat, lon, 5);
       });
       this.ctx.panels['ucdp-events'] = ucdpEventsPanel;
@@ -1470,9 +1475,10 @@ export class PanelLayoutManager implements AppModule {
   ): void {
     if (!this.shouldCreatePanel(key)) return;
     loader().then(async (panel) => {
-      this.ctx.panels[key] = panel as unknown as import('@/components/Panel').Panel;
+      const panelInstance = panel as unknown as import('@/components/Panel').Panel;
+      this.ctx.panels[key] = panelInstance;
       if (lockedFeatures) {
-        (panel as unknown as import('@/components/Panel').Panel).showLocked(lockedFeatures);
+        panelInstance.showLocked(lockedFeatures);
       } else {
         await replayPendingCalls(key, panel);
         if (setup) setup(panel);
@@ -1483,12 +1489,14 @@ export class PanelLayoutManager implements AppModule {
       const bottomGrid = document.getElementById('mapBottomGrid');
       if (bottomGrid && this.getEffectiveUltraWide() && this.bottomSetMemory.has(key)) {
         this.insertByOrder(bottomGrid, el, key);
+        panelInstance.toggle(this.ctx.panelSettings[key]?.enabled ?? true);
         return;
       }
 
       const grid = document.getElementById('panelsGrid');
       if (!grid) return;
       this.insertByOrder(grid, el, key);
+      panelInstance.toggle(this.ctx.panelSettings[key]?.enabled ?? true);
     }).catch((err) => {
       console.error(`[panel] failed to lazy-load "${key}"`, err);
     });

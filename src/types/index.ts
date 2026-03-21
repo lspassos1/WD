@@ -32,6 +32,7 @@ export type DataSourceId =
   | 'gpsjam'
   | 'sanctions_pressure'
   | 'radiation'
+  | 'forecasts'
   | 'treasury_revenue';
 
 // AppContext lives in src/app/app-context.ts because it references
@@ -176,6 +177,18 @@ export interface MarketData {
   price: number | null;
   change: number | null;
   sparkline?: number[];
+}
+
+export interface StockIndexData {
+  available: boolean;
+  code: string;
+  symbol: string;
+  indexName: string;
+  price: string;
+  weekChangePercent: string;
+  currency: string;
+  cached?: boolean;
+  updatedAt?: string;
 }
 
 export interface CryptoData {

@@ -473,6 +473,7 @@ export class DeckGLMap {
   private lastAircraftFetchCenter: [number, number] | null = null;
   private lastAircraftFetchZoom = -1;
   private aircraftFetchSeq = 0;
+  private pendingCenterRequest: { lat: number; lon: number; zoom?: number } | null = null;
 
   constructor(container: HTMLElement, initialState: DeckMapState) {
     this.container = container;
@@ -524,6 +525,7 @@ export class DeckGLMap {
       localizeMapLabels(this.maplibreMap);
       this.initDeck();
       this.loadCountryBoundaries();
+      this.applyPendingCenterRequest();
       this.fetchServerBases();
       this.render();
     });
@@ -719,6 +721,7 @@ export class DeckGLMap {
         localizeMapLabels(this.maplibreMap);
         this.initDeck();
         this.loadCountryBoundaries();
+        this.applyPendingCenterRequest();
         this.fetchServerBases();
         this.render();
       });
@@ -1573,8 +1576,13 @@ export class DeckGLMap {
       layers.push(this.createCommodityPortsLayer());
     }
 
-    // APT Groups layer — loaded lazily when cyberThreats layer is enabled
-    if (mapLayers.cyberThreats && SITE_VARIANT !== 'tech' && SITE_VARIANT !== 'happy' && this.aptGroups.length > 0) {
+    // APT Groups layer — loaded lazily when cyberThreats layer is enabled.
+    // In map harness visual mode we keep this layer renderable as a standalone scenario.
+    const forceAptGroupsForHarness =
+      import.meta.env.VITE_E2E === '1' &&
+      typeof window !== 'undefined' &&
+      window.location.pathname.includes('/tests/map-harness.html');
+    if ((mapLayers.cyberThreats || forceAptGroupsForHarness) && SITE_VARIANT !== 'tech' && SITE_VARIANT !== 'happy' && this.aptGroups.length > 0) {
       layers.push(this.createAPTGroupsLayer());
     }
 
@@ -1793,12 +1801,8 @@ export class DeckGLMap {
   }
 
   private createConflictZonesLayer(): GeoJsonLayer {
-    const cacheKey = this.countriesGeoJsonData
-      ? 'conflict-zones-layer-country-geometry'
-      : 'conflict-zones-layer';
-
     const layer = new GeoJsonLayer({
-      id: cacheKey,
+      id: 'conflict-zones-layer',
       data: this.buildConflictZoneGeoJson(),
       filled: true,
       stroked: true,
@@ -1815,7 +1819,10 @@ export class DeckGLMap {
 
 
   private getBasesData(): MilitaryBaseEnriched[] {
-    return this.serverBasesLoaded ? this.serverBases : MILITARY_BASES as MilitaryBaseEnriched[];
+    if (this.serverBasesLoaded && this.serverBases.length > 0) {
+      return this.serverBases;
+    }
+    return MILITARY_BASES as MilitaryBaseEnriched[];
   }
 
   private getBaseColor(type: string, a: number): [number, number, number, number] {
@@ -4528,12 +4535,31 @@ export class DeckGLMap {
   }
 
   public setCenter(lat: number, lon: number, zoom?: number): void {
-    if (this.maplibreMap) {
-      this.maplibreMap.flyTo({
-        center: [lon, lat],
-        ...(zoom != null && { zoom }),
-        duration: 500,
-      });
+    this.pendingCenterRequest = { lat, lon, zoom };
+    if (this.maplibreMap) this.maplibreMap.once('load', () => this.applyPendingCenterRequest());
+    this.applyPendingCenterRequest();
+  }
+
+  private applyPendingCenterRequest(): void {
+    if (!this.maplibreMap || !this.pendingCenterRequest) return;
+
+    const { lat, lon, zoom } = this.pendingCenterRequest;
+    const camera = {
+      center: [lon, lat] as [number, number],
+      ...(zoom != null && { zoom }),
+    };
+    try {
+      if (this.maplibreMap.isStyleLoaded()) {
+        this.maplibreMap.flyTo({
+          ...camera,
+          duration: 500,
+        });
+      } else {
+        this.maplibreMap.jumpTo(camera);
+      }
+      this.pendingCenterRequest = null;
+    } catch {
+      // Keep pending request and retry on next map load callback.
     }
   }
 
@@ -4588,6 +4614,10 @@ export class DeckGLMap {
       const toggle = this.container.querySelector(`.layer-toggle[data-layer="${key}"] input`) as HTMLInputElement;
       if (toggle) toggle.checked = value;
     });
+  }
+
+  public hasBasemapInstance(): boolean {
+    return this.maplibreMap !== null;
   }
 
   public getState(): DeckMapState {

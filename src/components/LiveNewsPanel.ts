@@ -414,8 +414,7 @@ export class LiveNewsPanel extends Panel {
     this.insertLiveCountBadge(OPTIONAL_LIVE_CHANNELS.length);
     this.youtubeOrigin = LiveNewsPanel.resolveYouTubeOrigin();
     this.playerElementId = `live-news-player-${Date.now()}`;
-    this.channels = loadChannelsFromStorage();
-    if (this.channels.length === 0) this.channels = getDefaultLiveChannels();
+    this.channels = this.resolveInitialChannels();
     const savedChannelId = loadFromStorage<string>(STORAGE_KEYS.activeChannel, '');
     const savedChannel = savedChannelId ? this.channels.find(c => c.id === savedChannelId) : null;
     this.activeChannel = savedChannel ?? this.channels[0]!;
@@ -1640,13 +1639,23 @@ export class LiveNewsPanel extends Panel {
 
   /** Reload channel list from storage (e.g. after edit in separate channel management window). */
   public refreshChannelsFromStorage(): void {
-    this.channels = loadChannelsFromStorage();
-    if (this.channels.length === 0) this.channels = getDefaultLiveChannels();
+    this.channels = this.resolveInitialChannels();
     if (!this.channels.some((c) => c.id === this.activeChannel.id)) {
       this.activeChannel = this.channels[0]!;
       void this.switchChannel(this.activeChannel);
     }
     this.refreshChannelSwitcher();
+  }
+
+  private resolveInitialChannels(): LiveChannel[] {
+    const storedChannels = loadChannelsFromStorage();
+    if (storedChannels.length > 0) return storedChannels;
+
+    const defaultChannels = getDefaultLiveChannels();
+    if (defaultChannels.length > 0) return defaultChannels;
+
+    // Happy variant intentionally has no defaults. Keep panel operable if enabled.
+    return FULL_LIVE_CHANNELS.map((channel) => ({ ...channel }));
   }
 
   public destroy(): void {

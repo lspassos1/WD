@@ -328,6 +328,29 @@ export interface ListOtherTokensResponse {
   tokens: CryptoQuote[];
 }
 
+export interface GetEarningsCalendarRequest {
+  timeframe: string;
+}
+
+export interface GetEarningsCalendarResponse {
+  reports: EarningsReport[];
+  finnhubSkipped: boolean;
+  skipReason: string;
+}
+
+export interface EarningsReport {
+  symbol: string;
+  title: string;
+  epsEstimate: number;
+  epsActual: number;
+  epsSurprisePercent: number;
+  revenueEstimate: number;
+  revenueActual: number;
+  revenueSurprisePercent: number;
+  reportDate: string;
+  reportTime: string;
+}
+
 export interface FieldViolation {
   field: string;
   description: string;
@@ -389,6 +412,7 @@ export interface MarketServiceHandler {
   listDefiTokens(ctx: ServerContext, req: ListDefiTokensRequest): Promise<ListDefiTokensResponse>;
   listAiTokens(ctx: ServerContext, req: ListAiTokensRequest): Promise<ListAiTokensResponse>;
   listOtherTokens(ctx: ServerContext, req: ListOtherTokensRequest): Promise<ListOtherTokensResponse>;
+  getEarningsCalendar(ctx: ServerContext, req: GetEarningsCalendarRequest): Promise<GetEarningsCalendarResponse>;
 }
 
 export function createMarketServiceRoutes(
@@ -1074,6 +1098,53 @@ export function createMarketServiceRoutes(
 
           const result = await handler.listOtherTokens(ctx, body);
           return new Response(JSON.stringify(result as ListOtherTokensResponse), {
+            status: 200,
+            headers: { "Content-Type": "application/json" },
+          });
+        } catch (err: unknown) {
+          if (err instanceof ValidationError) {
+            return new Response(JSON.stringify({ violations: err.violations }), {
+              status: 400,
+              headers: { "Content-Type": "application/json" },
+            });
+          }
+          if (options?.onError) {
+            return options.onError(err, req);
+          }
+          const message = err instanceof Error ? err.message : String(err);
+          return new Response(JSON.stringify({ message }), {
+            status: 500,
+            headers: { "Content-Type": "application/json" },
+          });
+        }
+      },
+    },
+    {
+      method: "GET",
+      path: "/api/market/v1/get-earnings-calendar",
+      handler: async (req: Request): Promise<Response> => {
+        try {
+          const pathParams: Record<string, string> = {};
+          const url = new URL(req.url, "http://localhost");
+          const params = url.searchParams;
+          const body: GetEarningsCalendarRequest = {
+            timeframe: params.get("timeframe") ?? "",
+          };
+          if (options?.validateRequest) {
+            const bodyViolations = options.validateRequest("getEarningsCalendar", body);
+            if (bodyViolations) {
+              throw new ValidationError(bodyViolations);
+            }
+          }
+
+          const ctx: ServerContext = {
+            request: req,
+            pathParams,
+            headers: Object.fromEntries(req.headers.entries()),
+          };
+
+          const result = await handler.getEarningsCalendar(ctx, body);
+          return new Response(JSON.stringify(result as GetEarningsCalendarResponse), {
             status: 200,
             headers: { "Content-Type": "application/json" },
           });

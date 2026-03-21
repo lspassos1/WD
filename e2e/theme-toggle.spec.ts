@@ -1,5 +1,7 @@
 import { expect, test } from '@playwright/test';
 
+const TEST_VARIANT = (process.env.VITE_VARIANT ?? 'full').toLowerCase();
+
 /**
  * Theme toggle E2E tests for the happy variant.
  *
@@ -8,6 +10,11 @@ import { expect, test } from '@playwright/test';
  */
 
 test.describe('theme toggle (happy variant)', () => {
+  test.skip(
+    !['full', 'happy'].includes(TEST_VARIANT),
+    'happy theme toggle assertions require a variant that supports happy override',
+  );
+
   test.beforeEach(async ({ page }) => {
     // Set variant to happy, clear theme preference ONLY on first load
     // (addInitScript runs on every navigation, so we use a flag)

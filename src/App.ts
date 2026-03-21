@@ -258,18 +258,21 @@ export class App {
       const panel = this.state.panels['consumer-prices'] as ConsumerPricesPanel | undefined;
       if (panel) primeTask('consumer-prices', () => panel.fetchData());
     }
-    if (shouldPrimeAny(['markets', 'heatmap', 'commodities', 'crypto', 'energy-complex'])) {
+    if (shouldPrimeAny(['markets', 'heatmap', 'commodities', 'crypto'])) {
       primeTask('markets', () => this.dataLoader.loadMarkets());
     }
     if (shouldPrime('polymarket')) {
       primeTask('predictions', () => this.dataLoader.loadPredictions());
+    }
+    if (shouldPrime('forecast')) {
+      primeTask('forecasts', () => this.dataLoader.loadForecasts());
     }
     if (shouldPrime('economic')) {
       primeTask('fred', () => this.dataLoader.loadFredData());
       primeTask('spending', () => this.dataLoader.loadGovernmentSpending());
       primeTask('bis', () => this.dataLoader.loadBisData());
     }
-    if (shouldPrime('energy-complex')) {
+    if (shouldPrime('economic')) {
       primeTask('oil', () => this.dataLoader.loadOilAnalytics());
     }
     if (shouldPrime('trade-policy')) {
@@ -809,7 +812,7 @@ export class App {
     window.addEventListener('scroll', this.handleViewportPrime, { passive: true });
     window.addEventListener('resize', this.handleViewportPrime);
     await Promise.all([
-      this.dataLoader.loadAllData(true),
+      this.dataLoader.loadAllData(),
       this.primeVisiblePanelData(true),
     ]);
 
@@ -953,7 +956,7 @@ export class App {
         { name: 'fred', fn: () => this.dataLoader.loadFredData(), intervalMs: REFRESH_INTERVALS.fred, condition: () => this.isPanelNearViewport('economic') },
         { name: 'spending', fn: () => this.dataLoader.loadGovernmentSpending(), intervalMs: REFRESH_INTERVALS.spending, condition: () => this.isPanelNearViewport('economic') },
         { name: 'bis', fn: () => this.dataLoader.loadBisData(), intervalMs: REFRESH_INTERVALS.bis, condition: () => this.isPanelNearViewport('economic') },
-        { name: 'oil', fn: () => this.dataLoader.loadOilAnalytics(), intervalMs: REFRESH_INTERVALS.oil, condition: () => this.isPanelNearViewport('energy-complex') },
+        { name: 'oil', fn: () => this.dataLoader.loadOilAnalytics(), intervalMs: REFRESH_INTERVALS.oil, condition: () => this.isPanelNearViewport('economic') },
         { name: 'firms', fn: () => this.dataLoader.loadFirmsData(), intervalMs: REFRESH_INTERVALS.firms, condition: () => this.shouldRefreshFirms() },
         { name: 'ais', fn: () => this.dataLoader.loadAisSignals(), intervalMs: REFRESH_INTERVALS.ais, condition: () => this.state.mapLayers.ais },
         { name: 'cables', fn: () => this.dataLoader.loadCableActivity(), intervalMs: REFRESH_INTERVALS.cables, condition: () => this.state.mapLayers.cables },

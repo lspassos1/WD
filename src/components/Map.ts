@@ -3810,9 +3810,10 @@ export class MapComponent {
     const height = this.container.clientHeight;
     const projection = this.getProjection(width, height);
     if (!projection.invert) return null;
-    const zoom = this.state.zoom;
-    const centerX = width / (2 * zoom) - this.state.pan.x;
-    const centerY = height / (2 * zoom) - this.state.pan.y;
+    // Pan is stored in projected-space units (pre-scale), so center inversion
+    // must use unscaled viewport midpoint.
+    const centerX = width / 2 - this.state.pan.x;
+    const centerY = height / 2 - this.state.pan.y;
     const coords = projection.invert([centerX, centerY]);
     if (!coords) return null;
     return { lon: coords[0], lat: coords[1] };

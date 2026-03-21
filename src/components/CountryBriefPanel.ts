@@ -1,7 +1,6 @@
-import type { CountryBriefSignals } from '@/types';
+import type { CountryBriefSignals, NewsItem, StockIndexData } from '@/types';
 import type { CountryScore } from '@/services/country-instability';
 import type { PredictionMarket } from '@/services/prediction';
-import type { NewsItem } from '@/types';
 
 export interface CountryIntelData {
   brief: string;
@@ -13,17 +12,6 @@ export interface CountryIntelData {
   skipped?: boolean;
   reason?: string;
   fallback?: boolean;
-}
-
-export interface StockIndexData {
-  available: boolean;
-  code: string;
-  symbol: string;
-  indexName: string;
-  price: string;
-  weekChangePercent: string;
-  currency: string;
-  cached?: boolean;
 }
 
 type ThreatLevel = 'critical' | 'high' | 'medium' | 'low' | 'info';

@@ -523,6 +523,38 @@ paths:
                         application/json:
                             schema:
                                 $ref: '#/components/schemas/Error'
+    /api/market/v1/get-earnings-calendar:
+        get:
+            tags:
+                - MarketService
+            summary: GetEarningsCalendar
+            description: GetEarningsCalendar retrieves upcoming and recent earnings reports.
+            operationId: GetEarningsCalendar
+            parameters:
+                - name: timeframe
+                  in: query
+                  required: false
+                  schema:
+                    type: string
+            responses:
+                "200":
+                    description: Successful response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/GetEarningsCalendarResponse'
+                "400":
+                    description: Validation error
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/ValidationError'
+                default:
+                    description: Error response
+                    content:
+                        application/json:
+                            schema:
+                                $ref: '#/components/schemas/Error'
 components:
     schemas:
         Error:
@@ -1354,3 +1386,48 @@ components:
                     items:
                         $ref: '#/components/schemas/CryptoQuote'
             description: ListOtherTokensResponse contains other token price data.
+        GetEarningsCalendarRequest:
+            type: object
+            properties:
+                timeframe:
+                    type: string
+        GetEarningsCalendarResponse:
+            type: object
+            properties:
+                reports:
+                    type: array
+                    items:
+                        $ref: '#/components/schemas/EarningsReport'
+                finnhubSkipped:
+                    type: boolean
+                skipReason:
+                    type: string
+        EarningsReport:
+            type: object
+            properties:
+                symbol:
+                    type: string
+                title:
+                    type: string
+                epsEstimate:
+                    type: number
+                    format: double
+                epsActual:
+                    type: number
+                    format: double
+                epsSurprisePercent:
+                    type: number
+                    format: double
+                revenueEstimate:
+                    type: number
+                    format: double
+                revenueActual:
+                    type: number
+                    format: double
+                revenueSurprisePercent:
+                    type: number
+                    format: double
+                reportDate:
+                    type: string
+                reportTime:
+                    type: string

@@ -25,6 +25,8 @@ export interface IntelligenceCache {
   imageryScenes?: Array<{ id: string; satellite: string; datetime: string; resolutionM: number; mode: string; geometryGeojson: string; previewUrl: string; assetUrl: string }>;
 }
 
+import type { CorrelationEngine } from '@/services/correlation-engine';
+
 export interface AppContext {
   map: import('@/components').MapContainer | null;
   readonly isMobile: boolean;
@@ -61,7 +63,7 @@ export interface AppContext {
   exportPanel: import('@/utils').ExportPanel | null;
   unifiedSettings: import('@/components/UnifiedSettings').UnifiedSettings | null;
   pizzintIndicator: import('@/components').PizzIntIndicator | null;
-  correlationEngine: import('@/services/correlation-engine').CorrelationEngine | null;
+  correlationEngine: CorrelationEngine | null;
   llmStatusIndicator: import('@/components').LlmStatusIndicator | null;
   countryBriefPage: import('@/components/CountryBriefPanel').CountryBriefPanel | null;
   countryTimeline: import('@/components/CountryTimeline').CountryTimeline | null;

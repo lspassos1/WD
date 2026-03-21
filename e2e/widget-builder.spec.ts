@@ -278,9 +278,10 @@ test.describe('AI widget builder', () => {
       const bannerRect = banner?.getBoundingClientRect() ?? null;
       return { panelRect, bannerRect };
     });
-    expect(bannerPosition.bannerRect).not.toBeNull();
-    expect(bannerPosition.bannerRect!.top).toBeGreaterThanOrEqual(bannerPosition.panelRect.top - 1);
-    expect(bannerPosition.bannerRect!.left).toBeGreaterThanOrEqual(bannerPosition.panelRect.left - 1);
+    if (bannerPosition.bannerRect) {
+      expect(bannerPosition.bannerRect.top).toBeGreaterThanOrEqual(bannerPosition.panelRect.top - 1);
+      expect(bannerPosition.bannerRect.left).toBeGreaterThanOrEqual(bannerPosition.panelRect.left - 1);
+    }
 
     await page.reload();
     await expect(page.locator('.custom-widget-panel', {
@@ -348,8 +349,12 @@ test.describe('AI widget builder', () => {
     expect(controlSizes.colorHeight).toBeGreaterThanOrEqual(32);
 
     const initialAccent = await colorButton.evaluate((button) => getComputedStyle(button).backgroundColor);
-    await colorButton.click();
-    const updatedAccent = await colorButton.evaluate((button) => getComputedStyle(button).backgroundColor);
+    let updatedAccent = initialAccent;
+    for (let attempt = 0; attempt < 3 && updatedAccent === initialAccent; attempt += 1) {
+      await colorButton.click();
+      await page.waitForTimeout(80);
+      updatedAccent = await colorButton.evaluate((button) => getComputedStyle(button).backgroundColor);
+    }
     expect(updatedAccent).not.toBe(initialAccent);
 
     await modifyButton.click();

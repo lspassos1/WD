@@ -195,6 +195,9 @@ export class MapContainer {
           ...this.initialState,
           view: this.initialState.view as DeckMapView,
         });
+        if (!this.deckGLMap.hasBasemapInstance()) {
+          throw new Error('DeckGL basemap container unavailable');
+        }
       } catch (error) {
         console.warn('[MapContainer] DeckGL initialization failed, falling back to SVG map', error);
         this.initSvgMap('[MapContainer] Initializing SVG map (DeckGL fallback mode)');

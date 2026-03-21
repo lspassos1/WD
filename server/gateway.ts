@@ -70,6 +70,7 @@ const RPC_CACHE_TIER: Record<string, CacheTier> = {
   '/api/market/v1/get-stock-analysis-history': 'medium',
   '/api/market/v1/backtest-stock': 'slow',
   '/api/market/v1/list-stored-stock-backtests': 'medium',
+  '/api/market/v1/get-earnings-calendar': 'medium',
   '/api/infrastructure/v1/list-service-statuses': 'slow',
   '/api/seismology/v1/list-earthquakes': 'slow',
   '/api/infrastructure/v1/list-internet-outages': 'slow',

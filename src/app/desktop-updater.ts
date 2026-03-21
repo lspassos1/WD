@@ -127,7 +127,7 @@ export class DesktopUpdater implements AppModule {
       .replace('arm64', 'aarch64');
 
     if (normalizedOs === 'windows') {
-      return normalizedArch === 'x86_64' ? 'windows-msi' : null;
+      return normalizedArch === 'x86_64' ? 'windows-exe' : null;
     }
 
     if (normalizedOs === 'macos' || normalizedOs === 'darwin') {
@@ -151,7 +151,7 @@ export class DesktopUpdater implements AppModule {
       const platform = this.mapDesktopDownloadPlatform(runtimeInfo.os, runtimeInfo.arch);
       if (platform) {
         const variant = this.getDesktopBuildVariant();
-        return `https://api.worldmonitor.app/api/download?platform=${platform}&variant=${variant}`;
+        return `https://worldmonitor.app/api/download?platform=${platform}&variant=${variant}`;
       }
     } catch {
       // Silent fallback to release page when desktop runtime info is unavailable.

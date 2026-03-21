@@ -411,9 +411,6 @@ async function proxyToCloud(requestUrl, req, remoteBase) {
   // The browser may have stale ETags from previous sessions with empty data.
   headers.delete('If-None-Match');
   headers.delete('If-Modified-Since');
-  // Identify sidecar as trusted origin so the cloud API key validator
-  // doesn't reject the request (no origin + no key = 401).
-  headers.set('Origin', 'https://worldmonitor.app');
   return fetch(target, {
     method: req.method,
     headers,

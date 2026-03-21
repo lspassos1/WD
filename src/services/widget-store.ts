@@ -25,11 +25,15 @@ export interface CustomWidgetSpec {
   updatedAt: number;
 }
 
+type StoredWidgetEntry = Omit<CustomWidgetSpec, 'html'> & { html?: string };
+
 export function loadWidgets(): CustomWidgetSpec[] {
-  const raw = loadFromStorage<CustomWidgetSpec[]>(STORAGE_KEY, []);
+  const raw = loadFromStorage<StoredWidgetEntry[]>(STORAGE_KEY, []);
   const result: CustomWidgetSpec[] = [];
   for (const w of raw) {
+    if (!w?.id || !w?.title) continue;
     const tier = w.tier === 'pro' ? 'pro' : 'basic';
+    const history = Array.isArray(w.conversationHistory) ? w.conversationHistory.slice(-MAX_HISTORY) : [];
     if (tier === 'pro') {
       const proHtml = localStorage.getItem(proHtmlKey(w.id));
       if (!proHtml) {
@@ -38,9 +42,29 @@ export function loadWidgets(): CustomWidgetSpec[] {
         cleanSpanEntry(PANEL_COL_SPANS_KEY, w.id);
         continue;
       }
-      result.push({ ...w, tier, html: proHtml });
+      result.push({
+        id: w.id,
+        title: w.title,
+        prompt: w.prompt ?? '',
+        tier,
+        html: proHtml,
+        accentColor: w.accentColor ?? null,
+        conversationHistory: history,
+        createdAt: w.createdAt ?? Date.now(),
+        updatedAt: w.updatedAt ?? Date.now(),
+      });
     } else {
-      result.push({ ...w, tier: 'basic' });
+      result.push({
+        id: w.id,
+        title: w.title,
+        prompt: w.prompt ?? '',
+        tier: 'basic',
+        html: typeof w.html === 'string' ? w.html : '',
+        accentColor: w.accentColor ?? null,
+        conversationHistory: history,
+        createdAt: w.createdAt ?? Date.now(),
+        updatedAt: w.updatedAt ?? Date.now(),
+      });
     }
   }
   return result;
@@ -56,12 +80,13 @@ export function saveWidget(spec: CustomWidgetSpec): void {
       throw new Error('Storage quota exceeded saving PRO widget HTML');
     }
     // Build metadata entry (no html field)
-    const meta: Omit<CustomWidgetSpec, 'html'> & { html: string } = {
-      ...spec,
-      html: '',
+    const { html: _html, ...metaBase } = spec;
+    const meta: StoredWidgetEntry = {
+      ...metaBase,
+      tier: 'pro',
       conversationHistory: spec.conversationHistory.slice(-MAX_HISTORY),
     };
-    const existing = loadFromStorage<CustomWidgetSpec[]>(STORAGE_KEY, []).filter(w => w.id !== spec.id);
+    const existing = loadFromStorage<StoredWidgetEntry[]>(STORAGE_KEY, []).filter(w => w.id !== spec.id);
     const updated = [...existing, meta].slice(-MAX_WIDGETS);
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
@@ -84,7 +109,7 @@ export function saveWidget(spec: CustomWidgetSpec): void {
 }
 
 export function deleteWidget(id: string): void {
-  const updated = loadFromStorage<CustomWidgetSpec[]>(STORAGE_KEY, []).filter(w => w.id !== id);
+  const updated = loadFromStorage<StoredWidgetEntry[]>(STORAGE_KEY, []).filter(w => w.id !== id);
   saveToStorage(STORAGE_KEY, updated);
   try { localStorage.removeItem(proHtmlKey(id)); } catch { /* ignore */ }
   cleanSpanEntry(PANEL_SPANS_KEY, id);

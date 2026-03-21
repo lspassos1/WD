@@ -1,5 +1,5 @@
 import { Panel } from './Panel';
-import type { FredSeries, BisData } from '@/services/economic';
+import type { FredSeries, BisData, OilAnalytics } from '@/services/economic';
 import { t } from '@/services/i18n';
 import { escapeHtml } from '@/utils/sanitize';
 import { isDesktopRuntime } from '@/services/runtime';
@@ -9,7 +9,7 @@ import { formatAwardAmount, getAwardTypeIcon } from '@/services/usa-spending';
 import { getCSSColor } from '@/utils';
 import { sparkline } from '@/utils/sparkline';
 
-type TabId = 'indicators' | 'spending' | 'centralBanks';
+type TabId = 'indicators' | 'spending' | 'centralBanks' | 'energy';
 
 function formatSeriesValue(series: FredSeries): string {
   if (series.value === null) return 'N/A';
@@ -74,6 +74,7 @@ export class EconomicPanel extends Panel {
   private fredData: FredSeries[] = [];
   private spendingData: SpendingSummary | null = null;
   private bisData: BisData | null = null;
+  private oilData: OilAnalytics | null = null;
   private lastUpdate: Date | null = null;
   private activeTab: TabId = 'indicators';
 
@@ -109,19 +110,30 @@ export class EconomicPanel extends Panel {
     this.render();
   }
 
+  public updateOil(data: OilAnalytics): void {
+    this.oilData = data;
+    this.render();
+  }
+
   public setLoading(loading: boolean): void {
     if (loading) this.showLoading();
   }
 
   private render(): void {
     const hasSpending = this.spendingData && this.spendingData.awards?.length > 0;
-    const hasBis = this.bisData && this.bisData.policyRates?.length > 0;
+    const hasBis = this.bisData && (this.bisData.policyRates?.length > 0 || this.bisData.exchangeRates?.length > 0 || this.bisData.creditToGdp?.length > 0);
+    const hasOil = !!this.oilData && (!!this.oilData.wtiPrice || !!this.oilData.brentPrice);
 
     const tabsHtml = `
       <div class="panel-tabs">
         <button class="panel-tab ${this.activeTab === 'indicators' ? 'active' : ''}" data-tab="indicators">
           ${t('components.economic.indicators')}
         </button>
+        ${hasOil ? `
+          <button class="panel-tab ${this.activeTab === 'energy' ? 'active' : ''}" data-tab="energy">
+            ${t('components.economic.energy')}
+          </button>
+        ` : ''}
         ${hasSpending ? `
           <button class="panel-tab ${this.activeTab === 'spending' ? 'active' : ''}" data-tab="spending">
             ${t('components.economic.gov')}
@@ -146,6 +158,9 @@ export class EconomicPanel extends Panel {
       case 'centralBanks':
         contentHtml = this.renderCentralBanks();
         break;
+      case 'energy':
+        contentHtml = this.renderEnergy();
+        break;
     }
 
     const updateTime = this.lastUpdate
@@ -168,6 +183,7 @@ export class EconomicPanel extends Panel {
       case 'indicators': return 'FRED';
       case 'spending': return 'USASpending.gov';
       case 'centralBanks': return 'BIS';
+      case 'energy': return 'EIA';
     }
   }
 
@@ -220,6 +236,44 @@ export class EconomicPanel extends Panel {
             </div>
           `).join('')}
         </div>
+      </div>
+    `;
+  }
+
+  private renderEnergy(): string {
+    if (!this.oilData) return `<div class="p-4 text-dim text-center">${t('common.noData')}</div>`;
+
+    const metrics = [
+      { key: 'wti', data: this.oilData.wtiPrice, icon: '🛢️' },
+      { key: 'brent', data: this.oilData.brentPrice, icon: '🌊' },
+      { key: 'production', data: this.oilData.usProduction, icon: '🏭' },
+      { key: 'inventory', data: this.oilData.usInventory, icon: '📦' },
+    ];
+
+    return `
+      <div class="economic-energy-grid">
+        ${metrics.map(m => {
+          if (!m.data) return '';
+          const trendClass = m.data.trend || 'stable';
+          const changeClass = m.data.changePct > 0 ? 'positive' : m.data.changePct < 0 ? 'negative' : '';
+          return `
+            <div class="energy-metric-card">
+              <div class="metric-header">
+                <span class="metric-icon">${m.icon}</span>
+                <span class="metric-name">${m.data.name}</span>
+              </div>
+              <div class="metric-body">
+                <div class="metric-value">${m.data.current} <span class="metric-unit">${m.data.unit}</span></div>
+                <div class="metric-change ${changeClass}">
+                  ${m.data.changePct > 0 ? '+' : ''}${m.data.changePct}%
+                  <span class="trend-icon ${trendClass}">
+                    ${m.data.trend === 'up' ? '▲' : m.data.trend === 'down' ? '▼' : '●'}
+                  </span>
+                </div>
+              </div>
+            </div>
+          `;
+        }).join('')}
       </div>
     `;
   }
