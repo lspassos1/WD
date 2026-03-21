@@ -1,11 +1,37 @@
 import type { PanelConfig, MapLayers } from '@/types';
 import type { DataSourceId } from '@/types';
+import { detectDesktopRuntime } from '@/config/runtime';
 import { SITE_VARIANT } from './variant';
-import { isDesktopRuntime } from '@/services/runtime';
 // boundary-ignore: getSecretState is a pure env/keychain probe with no service dependencies
 import { getSecretState } from '@/services/runtime-config';
 
-const _desktop = isDesktopRuntime();
+const ENV = (() => {
+  try {
+    return import.meta.env ?? {};
+  } catch {
+    return {} as Record<string, string | undefined>;
+  }
+})();
+
+function isDesktopRuntimeForConfig(): boolean {
+  if (ENV.VITE_DESKTOP_RUNTIME === '1') {
+    return true;
+  }
+
+  if (typeof window === 'undefined') {
+    return false;
+  }
+
+  return detectDesktopRuntime({
+    hasTauriGlobals: '__TAURI_INTERNALS__' in window || '__TAURI__' in window,
+    userAgent: window.navigator?.userAgent ?? '',
+    locationProtocol: window.location?.protocol ?? '',
+    locationHost: window.location?.host ?? '',
+    locationOrigin: window.location?.origin ?? '',
+  });
+}
+
+const _desktop = isDesktopRuntimeForConfig();
 
 // ============================================
 // FULL VARIANT (Geopolitical)
@@ -879,7 +905,7 @@ export function isPanelEntitled(key: string, config: PanelConfig): boolean {
     return getSecretState('WORLDMONITOR_API_KEY').present;
   }
   if (config.premium === 'locked') {
-    return isDesktopRuntime();
+    return isDesktopRuntimeForConfig();
   }
   return true;
 }
