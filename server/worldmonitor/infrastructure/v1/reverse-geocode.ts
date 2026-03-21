@@ -86,7 +86,7 @@ export const reverseGeocode: InfrastructureServiceHandler['reverseGeocode'] = as
     const displayName = data.display_name || country || '';
 
     const result: ReverseCacheEntry = { country, code, displayName };
-    setCachedJson(cacheKey, result, 604800).catch(() => {});
+    await setCachedJson(cacheKey, result, 604800);
 
     return { country, code, displayName, error: '' };
   } catch (err) {
