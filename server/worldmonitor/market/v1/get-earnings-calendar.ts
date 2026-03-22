@@ -15,6 +15,18 @@ import { cachedFetchJson } from '../../../_shared/redis';
 const REDIS_CACHE_KEY = 'market:earnings-calendar:v1';
 const REDIS_CACHE_TTL = 3600; // 1 hour
 
+interface FinnhubEarningsCalendarEntry {
+  symbol?: string;
+  epsEstimate?: number | string | null;
+  epsActual?: number | string | null;
+  epsSurprisePercent?: number | string | null;
+  revenueEstimate?: number | string | null;
+  revenueActual?: number | string | null;
+  revenueSurprisePercent?: number | string | null;
+  date?: string;
+  hour?: string;
+}
+
 export async function getEarningsCalendar(
   _ctx: ServerContext,
   req: GetEarningsCalendarRequest,
@@ -71,10 +83,10 @@ export async function getEarningsCalendar(
         return null;
       }
 
-      const data = await res.json() as { earningsCalendar?: any[] };
+      const data = await res.json() as { earningsCalendar?: FinnhubEarningsCalendarEntry[] };
       const rawReports = data.earningsCalendar || [];
       
-      const reports: EarningsReport[] = rawReports.map((r: any) => ({
+      const reports: EarningsReport[] = rawReports.map((r) => ({
         symbol: r.symbol || '',
         title: r.symbol || '', // Finnhub doesn't provide company name here, symbol used as title
         epsEstimate: r.epsEstimate != null ? Number(r.epsEstimate) : 0,

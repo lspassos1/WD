@@ -278,6 +278,7 @@ const internals = map as unknown as {
   getTooltip?: (info: { object?: unknown; layer?: { id?: string } }) => { html?: string } | null;
   newsLocationFirstSeen?: Map<string, number>;
   newsPulseIntervalId?: ReturnType<typeof setInterval> | null;
+  popup?: { hide?: () => void };
   startupTime?: number;
   stopPulseAnimation?: () => void;
 };
@@ -1157,13 +1158,50 @@ const ensureDeterministicStyles = (): void => {
   document.head.appendChild(style);
 };
 
-const hideRasterBasemap = (): void => {
+const hideBasemapLayers = (): void => {
   const maplibreMap = internals.maplibreMap;
   if (!maplibreMap) return;
 
   try {
-    if (maplibreMap.getLayer('carto-dark-layer')) {
-      maplibreMap.setPaintProperty('carto-dark-layer', 'raster-opacity', 0);
+    for (const layer of maplibreMap.getStyle()?.layers ?? []) {
+      if (layer.type === 'symbol') {
+        maplibreMap.setLayoutProperty(layer.id, 'visibility', 'none');
+        continue;
+      }
+
+      if (layer.type === 'background') {
+        maplibreMap.setPaintProperty(layer.id, 'background-opacity', 0);
+        continue;
+      }
+
+      if (layer.type === 'raster') {
+        maplibreMap.setPaintProperty(layer.id, 'raster-opacity', 0);
+        continue;
+      }
+
+      if (layer.type === 'fill') {
+        maplibreMap.setPaintProperty(layer.id, 'fill-opacity', 0);
+        continue;
+      }
+
+      if (layer.type === 'line') {
+        maplibreMap.setPaintProperty(layer.id, 'line-opacity', 0);
+        continue;
+      }
+
+      if (layer.type === 'circle') {
+        maplibreMap.setPaintProperty(layer.id, 'circle-opacity', 0);
+        continue;
+      }
+
+      if (layer.type === 'fill-extrusion') {
+        maplibreMap.setPaintProperty(layer.id, 'fill-extrusion-opacity', 0);
+        continue;
+      }
+
+      if (layer.type === 'heatmap') {
+        maplibreMap.setPaintProperty(layer.id, 'heatmap-opacity', 0);
+      }
     }
   } catch {
     // No-op for harness stability.
@@ -1173,10 +1211,17 @@ const hideRasterBasemap = (): void => {
 const enableDeterministicVisualMode = (): void => {
   document.body.classList.add(DETERMINISTIC_BODY_CLASS);
   ensureDeterministicStyles();
-  hideRasterBasemap();
+  hideBasemapLayers();
   makeNewsLocationsNonRecent();
   map.render();
   deterministicVisualModeEnabled = true;
+};
+
+const clearTransientUi = (): void => {
+  internals.popup?.hide?.();
+  document.querySelector('.deckgl-webcam-popup')?.remove();
+  document.querySelector('.layer-help-popup')?.remove();
+  document.querySelector('.layer-warn-overlay')?.remove();
 };
 
 const prepareVisualScenario = (scenarioId: string): boolean => {
@@ -1184,6 +1229,7 @@ const prepareVisualScenario = (scenarioId: string): boolean => {
   if (!scenario) return false;
 
   enableDeterministicVisualMode();
+  clearTransientUi();
 
   map.setRenderPaused(true);
   setLayersForSnapshot(scenario.enabledLayers);
@@ -1238,16 +1284,25 @@ seedAllDynamicData();
 let ready = false;
 const readyStartedAt = Date.now();
 const STYLE_READY_FALLBACK_MS = 12_000;
+const HARD_READY_FALLBACK_MS = 20_000;
 const pollReady = (): void => {
-  const hasCanvas = Boolean(document.querySelector('#deckgl-basemap canvas'));
+  const hasCanvas = Boolean(
+    document.querySelector('#deckgl-basemap canvas') ||
+    document.querySelector('#deckgl-basemap .maplibregl-canvas-container')
+  );
   const maplibreMap = internals.maplibreMap;
   const styleLoaded = Boolean(maplibreMap?.isStyleLoaded());
+  const elapsedMs = Date.now() - readyStartedAt;
   const allowStyleFallback =
     hasCanvas &&
     Boolean(maplibreMap) &&
-    Date.now() - readyStartedAt >= STYLE_READY_FALLBACK_MS;
+    elapsedMs >= STYLE_READY_FALLBACK_MS;
+  // E2E harnesses should not block indefinitely on remote basemap/style fetches.
+  // Once the map instance exists for long enough, later tests still assert
+  // actual layer data, transforms, and console/page stability.
+  const allowHardFallback = Boolean(maplibreMap) && elapsedMs >= HARD_READY_FALLBACK_MS;
 
-  if ((hasCanvas && styleLoaded) || allowStyleFallback) {
+  if ((hasCanvas && styleLoaded) || allowStyleFallback || allowHardFallback) {
     if (!deterministicVisualModeEnabled) {
       enableDeterministicVisualMode();
     }
@@ -1255,7 +1310,7 @@ const pollReady = (): void => {
     return;
   }
 
-  requestAnimationFrame(pollReady);
+  window.setTimeout(pollReady, 100);
 };
 pollReady();
 

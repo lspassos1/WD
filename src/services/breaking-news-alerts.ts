@@ -36,6 +36,22 @@ const DEFAULT_SETTINGS: AlertSettings = {
   sensitivity: 'critical-and-high',
 };
 
+interface TelegramSignalItem {
+  text?: string;
+  ts?: string | number;
+  earlySignal?: boolean;
+  severity?: 'critical' | 'high' | 'medium' | 'low';
+  [key: string]: unknown;
+}
+
+interface TelegramSignalPayload {
+  items?: TelegramSignalItem[];
+}
+
+interface OrefAlertPayload {
+  alerts?: OrefAlert[];
+}
+
 const dedupeMap = new Map<string, number>();
 let lastGlobalAlertMs = 0;
 let lastGlobalAlertLevel: 'critical' | 'high' | null = null;
@@ -247,21 +263,24 @@ export function initBreakingNewsAlerts(): void {
   window.addEventListener('storage', storageListener);
 
   // Subscribe to real-time Telegram feeds
-  sseUnsubTelegram = getSseClient().subscribe('telegram', (payload: any) => {
+  sseUnsubTelegram = getSseClient().subscribe<TelegramSignalPayload>('telegram', (payload) => {
     if (!payload?.items || !Array.isArray(payload.items)) return;
 
     // Convert Telegram array to NewsItem-like objects to feed into checkBatchForBreakingAlerts
     const mappedItems: NewsItem[] = payload.items
-      .filter((it: any) => it.earlySignal === true || it.severity === 'critical' || it.severity === 'high')
-      .map((it: any) => ({
-        ...it,
+      .filter((it) => it.earlySignal === true || it.severity === 'critical' || it.severity === 'high')
+      .map((it) => ({
+        source: 'Telegram Signals',
         title: it.text || 'Early Signal',
+        link: `telegram://signal/${simpleHash(`${it.ts ?? ''}|${it.text ?? ''}`)}`,
         pubDate: new Date(it.ts || Date.now()),
         isAlert: true,
-        threat: { 
-          level: (it.severity === 'critical' || it.earlySignal) ? 'critical' : (it.severity || 'high'), 
-          source: 'telegram' 
-        }
+        threat: {
+          level: (it.severity === 'critical' || it.earlySignal) ? 'critical' : (it.severity || 'high'),
+          category: 'general',
+          confidence: 0.9,
+          source: 'ml',
+        },
       }));
 
     if (mappedItems.length > 0) {
@@ -270,7 +289,7 @@ export function initBreakingNewsAlerts(): void {
   });
 
   // Subscribe to real-time OREF alarms
-  sseUnsubOref = getSseClient().subscribe('oref', (payload: any) => {
+  sseUnsubOref = getSseClient().subscribe<OrefAlertPayload>('oref', (payload) => {
     if (!payload?.alerts || !Array.isArray(payload.alerts)) return;
     dispatchOrefBreakingAlert(payload.alerts);
   });

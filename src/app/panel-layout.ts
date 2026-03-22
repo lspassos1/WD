@@ -72,7 +72,13 @@ import { trackCriticalBannerAction } from '@/services/analytics';
 import { getSecretState } from '@/services/runtime-config';
 import { CustomWidgetPanel } from '@/components/CustomWidgetPanel';
 import { openWidgetChatModal } from '@/components/WidgetChatModal';
-import { isProUser, loadWidgets, saveWidget } from '@/services/widget-store';
+import {
+  isProUser,
+  isProWidgetEnabled,
+  isWidgetFeatureEnabled,
+  loadWidgets,
+  saveWidget,
+} from '@/services/widget-store';
 import type { CustomWidgetSpec } from '@/services/widget-store';
 import { McpDataPanel } from '@/components/McpDataPanel';
 import { openMcpConnectModal } from '@/components/McpConnectModal';
@@ -1052,9 +1058,31 @@ export class PanelLayoutManager implements AppModule {
     });
     panelsGrid.appendChild(addPanelBlock);
 
-    if (isProUser()) {
+    if (isWidgetFeatureEnabled()) {
+      const basicBlock = document.createElement('button');
+      basicBlock.className = 'add-panel-block ai-widget-block';
+      basicBlock.setAttribute('aria-label', t('widgets.createWithAi'));
+      const basicIcon = document.createElement('span');
+      basicIcon.className = 'add-panel-block-icon';
+      basicIcon.textContent = '\u2728';
+      const basicLabel = document.createElement('span');
+      basicLabel.className = 'add-panel-block-label';
+      basicLabel.textContent = t('widgets.createWithAi');
+      basicBlock.appendChild(basicIcon);
+      basicBlock.appendChild(basicLabel);
+      basicBlock.addEventListener('click', () => {
+        openWidgetChatModal({
+          mode: 'create',
+          tier: 'basic',
+          onComplete: (spec) => this.addCustomWidget(spec),
+        });
+      });
+      panelsGrid.appendChild(basicBlock);
+    }
+
+    if (isProWidgetEnabled()) {
       const proBlock = document.createElement('button');
-      proBlock.className = 'add-panel-block ai-widget-block ai-widget-block-pro';
+      proBlock.className = 'add-panel-block ai-widget-block-pro';
       proBlock.setAttribute('aria-label', t('widgets.createInteractive'));
       const proIcon = document.createElement('span');
       proIcon.className = 'add-panel-block-icon';

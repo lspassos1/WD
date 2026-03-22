@@ -2,6 +2,10 @@ import { expect, test } from '@playwright/test';
 
 test.describe('Deduct Situation Panel Options', () => {
     test('It successfully requests deduction from the intelligence API', async ({ page }) => {
+        test.skip(
+            process.env.TEST_DESKTOP_E2E !== '1',
+            'Deduction panel is desktop-only and is not mounted in browser Playwright runs.',
+        );
         await page.goto('/?view=global');
 
         // MOCK the backend deduct-situation RPC response UNLESS testing real LLM flows

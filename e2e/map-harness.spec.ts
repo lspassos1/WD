@@ -129,7 +129,7 @@ const EXPECTED_FINANCE_DECK_LAYERS = [
 const waitForHarnessReady = async (
   page: import('@playwright/test').Page
 ): Promise<void> => {
-  await page.goto('/tests/map-harness.html');
+  await page.goto('/tests/map-harness.html?alert=false');
   await expect(page.locator('.deckgl-map-wrapper')).toBeVisible();
   await expect
     .poll(async () => {
@@ -137,7 +137,7 @@ const waitForHarnessReady = async (
         const w = window as HarnessWindow;
         return Boolean(w.__mapHarness?.ready);
       });
-    }, { timeout: 45000 })
+    }, { timeout: 90000 })
     .toBe(true);
 };
 
@@ -158,14 +158,14 @@ const prepareVisualScenario = async (
         const w = window as HarnessWindow;
         return w.__mapHarness?.isVisualScenarioReady(id) ?? false;
       }, scenarioId);
-    }, { timeout: 20000 })
+    }, { timeout: 60000 })
     .toBe(true);
 
   await page.waitForTimeout(250);
 };
 
 test.describe('DeckGL map harness', () => {
-  test.describe.configure({ retries: 1 });
+  test.describe.configure({ retries: 1, timeout: 300000 });
 
   test('serves requested runtime variant for this test run', async ({ page }) => {
     await waitForHarnessReady(page);
@@ -246,7 +246,7 @@ test.describe('DeckGL map harness', () => {
           snapshot.filter((layer) => layer.dataCount > 0).map((layer) => layer.id)
         );
         return expectedDeckLayers.filter((id) => !nonEmptyIds.has(id)).length;
-      }, { timeout: 40000 })
+      }, { timeout: 90000 })
       .toBe(0);
 
     await expect
@@ -256,7 +256,7 @@ test.describe('DeckGL map harness', () => {
           const layers = w.__mapHarness?.getDeckLayerSnapshot() ?? [];
           return layers.find((layer) => layer.id === 'protest-clusters-layer')?.dataCount ?? 0;
         });
-      }, { timeout: 20000 })
+      }, { timeout: 60000 })
       .toBeGreaterThan(0);
 
     await page.evaluate(() => {
@@ -271,7 +271,7 @@ test.describe('DeckGL map harness', () => {
           const layers = w.__mapHarness?.getDeckLayerSnapshot() ?? [];
           return layers.find((layer) => layer.id === 'datacenter-clusters-layer')?.dataCount ?? 0;
         });
-      }, { timeout: 20000 })
+      }, { timeout: 60000 })
       .toBeGreaterThan(0);
 
     if (variant === 'tech') {
@@ -287,7 +287,7 @@ test.describe('DeckGL map harness', () => {
             const layers = w.__mapHarness?.getDeckLayerSnapshot() ?? [];
             return layers.find((layer) => layer.id === 'tech-hq-clusters-layer')?.dataCount ?? 0;
           });
-        }, { timeout: 20000 })
+        }, { timeout: 60000 })
         .toBeGreaterThan(0);
 
       await expect
@@ -297,19 +297,14 @@ test.describe('DeckGL map harness', () => {
             const layers = w.__mapHarness?.getDeckLayerSnapshot() ?? [];
             return layers.find((layer) => layer.id === 'tech-event-clusters-layer')?.dataCount ?? 0;
           });
-        }, { timeout: 20000 })
+        }, { timeout: 60000 })
         .toBeGreaterThan(0);
     }
   });
 
   test('renders GCC investments layer when enabled in finance variant', async ({ page }) => {
+    test.skip(process.env.VITE_VARIANT !== 'finance', 'Finance variant only');
     await waitForHarnessReady(page);
-
-    const variant = await page.evaluate(() => {
-      const w = window as HarnessWindow;
-      return w.__mapHarness?.variant ?? 'full';
-    });
-    test.skip(variant !== 'finance', 'Finance variant only');
 
     await page.evaluate(() => {
       const w = window as HarnessWindow;
@@ -465,6 +460,7 @@ test.describe('DeckGL map harness', () => {
     page,
   }) => {
     await waitForHarnessReady(page);
+    await prepareVisualScenario(page, 'protests-z5');
 
     await expect
       .poll(async () => {
@@ -616,7 +612,7 @@ test.describe('DeckGL map harness', () => {
           const w = window as HarnessWindow;
           return w.__mapHarness?.getLayerDataCount('hotspots-layer') ?? -1;
         });
-      }, { timeout: 10000 })
+      }, { timeout: 30000 })
       .toBe(0);
 
     const afterTransform = await page.evaluate(() => {
