@@ -9,24 +9,31 @@ const root = resolve(__dirname, '..');
 
 describe('Market breadth bootstrap registration', () => {
   const cacheKeysSrc = readFileSync(join(root, 'server', '_shared', 'cache-keys.ts'), 'utf-8');
+  const generatedBootstrapSrc = readFileSync(join(root, 'server', '_shared', '_generated', 'bootstrap-registry.ts'), 'utf-8');
+  const generatedDatasetRegistrySrc = readFileSync(join(root, 'api', '_generated', 'dataset-registry.js'), 'utf-8');
   const bootstrapSrc = readFileSync(join(root, 'api', 'bootstrap.js'), 'utf-8');
   const healthSrc = readFileSync(join(root, 'api', 'health.js'), 'utf-8');
   const gatewaySrc = readFileSync(join(root, 'server', 'gateway.ts'), 'utf-8');
 
   it('cache-keys.ts has breadthHistory in BOOTSTRAP_CACHE_KEYS', () => {
-    assert.match(cacheKeysSrc, /breadthHistory:\s+'market:breadth-history:v1'/);
+    assert.match(cacheKeysSrc, /BOOTSTRAP_CACHE_KEYS/);
+    assert.match(cacheKeysSrc, /_generated\/bootstrap-registry/);
+    assert.match(generatedBootstrapSrc, /"breadthHistory":\s*"market:breadth-history:v1"/);
   });
 
   it('cache-keys.ts has breadthHistory in BOOTSTRAP_TIERS', () => {
-    assert.match(cacheKeysSrc, /breadthHistory:\s+'slow'/);
+    assert.match(cacheKeysSrc, /BOOTSTRAP_TIERS/);
+    assert.match(generatedBootstrapSrc, /"breadthHistory":\s*"slow"/);
   });
 
   it('bootstrap.js has breadthHistory key', () => {
-    assert.match(bootstrapSrc, /breadthHistory:\s+'market:breadth-history:v1'/);
+    assert.match(bootstrapSrc, /_generated\/dataset-registry\.js/);
+    assert.match(generatedDatasetRegistrySrc, /"breadthHistory":\s*"market:breadth-history:v1"/);
   });
 
   it('bootstrap.js has breadthHistory in SLOW_KEYS', () => {
-    assert.match(bootstrapSrc, /'breadthHistory'/);
+    assert.match(bootstrapSrc, /BOOTSTRAP_TIERS/);
+    assert.match(generatedDatasetRegistrySrc, /"breadthHistory":\s*"slow"/);
   });
 
   it('health.js has breadthHistory data key', () => {

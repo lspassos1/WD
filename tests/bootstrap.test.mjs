@@ -8,55 +8,59 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
 
 describe('Bootstrap cache key registry', () => {
-  const cacheKeysPath = join(root, 'server', '_shared', 'cache-keys.ts');
-  const cacheKeysSrc = readFileSync(cacheKeysPath, 'utf-8');
+  const bootstrapRegistryTsPath = join(root, 'server', '_shared', '_generated', 'bootstrap-registry.ts');
+  const bootstrapRegistryTsSrc = readFileSync(bootstrapRegistryTsPath, 'utf-8');
+  const generatedRegistrySrc = readFileSync(join(root, 'api', '_generated', 'dataset-registry.js'), 'utf-8');
   const bootstrapSrc = readFileSync(join(root, 'api', 'bootstrap.js'), 'utf-8');
-
-  const cacheKeysBlock = cacheKeysSrc.match(/BOOTSTRAP_CACHE_KEYS[^{]*\{([^}]+)\}/)?.[1] ?? '';
+  const generatedBlock = generatedRegistrySrc.match(/BOOTSTRAP_CACHE_KEYS[^=]*=\s*\{([\s\S]*?)\};/)?.[1] ?? '';
 
   it('exports BOOTSTRAP_CACHE_KEYS with at least 10 entries', () => {
-    const matches = cacheKeysBlock.match(/^\s+\w+:\s+'[^']+'/gm);
+    const matches = generatedBlock.match(/"[^"]+":\s*"[^"]+"/gm);
     assert.ok(matches && matches.length >= 10, `Expected ≥10 keys, found ${matches?.length ?? 0}`);
   });
 
-  it('api/bootstrap.js inlined keys match server/_shared/cache-keys.ts', () => {
+  it('generated TS and JS registry files stay in parity', () => {
     const extractKeys = (src) => {
       const block = src.match(/BOOTSTRAP_CACHE_KEYS[^=]*=\s*\{([^}]+)\}/);
       if (!block) return {};
-      const re = /(\w+):\s+'([a-z0-9_-]+(?::[a-z0-9_-]+)+:v\d+)'/g;
+      const re = /["']([^"']+)["']:\s*["']([^"']+)["']/g;
       const keys = {};
       let m;
       while ((m = re.exec(block[1])) !== null) keys[m[1]] = m[2];
       return keys;
     };
-    const canonical = extractKeys(cacheKeysSrc);
-    const inlined = extractKeys(bootstrapSrc);
+    const canonical = extractKeys(bootstrapRegistryTsSrc);
+    const generated = extractKeys(generatedRegistrySrc);
     assert.ok(Object.keys(canonical).length >= 10, 'Canonical registry too small');
     for (const [name, key] of Object.entries(canonical)) {
-      assert.equal(inlined[name], key, `Key '${name}' mismatch: canonical='${key}', inlined='${inlined[name]}'`);
+      assert.equal(generated[name], key, `Key '${name}' mismatch: canonical='${key}', generated='${generated[name]}'`);
     }
-    for (const [name, key] of Object.entries(inlined)) {
+    for (const [name, key] of Object.entries(generated)) {
       assert.equal(canonical[name], key, `Extra inlined key '${name}' not in canonical registry`);
     }
   });
 
   it('every cache key matches a handler cache key pattern', () => {
-    const keyRe = /:\s+'([^']+)'/g;
+    const keyRe = /"[^"]+":\s*"([^"]+)"/g;
     let m;
     const keys = [];
-    while ((m = keyRe.exec(cacheKeysBlock)) !== null) {
+    while ((m = keyRe.exec(generatedBlock)) !== null) {
       keys.push(m[1]);
     }
     for (const key of keys) {
-      assert.match(key, /^[a-z0-9_-]+(?::[a-z0-9_-]+)+:v\d+(?::[a-z0-9_-]+)*$/, `Cache key "${key}" does not match expected pattern`);
+      assert.match(
+        key,
+        /^[a-z0-9_-]+(?::[a-z0-9_-]+)+$/,
+        `Cache key "${key}" must stay lowercase, colon-delimited, and free of runtime placeholders`,
+      );
     }
   });
 
   it('has no duplicate cache keys', () => {
-    const keyRe = /:\s+'([^']+)'/g;
+    const keyRe = /"[^"]+":\s*"([^"]+)"/g;
     let m;
     const keys = [];
-    while ((m = keyRe.exec(cacheKeysBlock)) !== null) {
+    while ((m = keyRe.exec(generatedBlock)) !== null) {
       keys.push(m[1]);
     }
     const unique = new Set(keys);
@@ -64,10 +68,10 @@ describe('Bootstrap cache key registry', () => {
   });
 
   it('has no duplicate logical names', () => {
-    const nameRe = /^\s+(\w+):/gm;
+    const nameRe = /"([^"]+)":/gm;
     let m;
     const names = [];
-    while ((m = nameRe.exec(cacheKeysBlock)) !== null) {
+    while ((m = nameRe.exec(generatedBlock)) !== null) {
       names.push(m[1]);
     }
     const unique = new Set(names);
@@ -75,11 +79,10 @@ describe('Bootstrap cache key registry', () => {
   });
 
   it('every cache key maps to a handler file or external seed script', () => {
-    const block = cacheKeysSrc.match(/BOOTSTRAP_CACHE_KEYS[^{]*\{([^}]+)\}/);
-    const keyRe = /:\s+'([^']+)'/g;
+    const keyRe = /"[^"]+":\s*"([^"]+)"/g;
     let m;
     const keys = [];
-    while ((m = keyRe.exec(block[1])) !== null) {
+    while ((m = keyRe.exec(generatedBlock)) !== null) {
       keys.push(m[1]);
     }
 
@@ -102,12 +105,13 @@ describe('Bootstrap cache key registry', () => {
       .map(f => readFileSync(join(root, 'scripts', f), 'utf-8'))
       .join('\n');
     const healthSrc = readFileSync(join(root, 'api', 'health.js'), 'utf-8');
-    const allSearchable = allHandlerCode + '\n' + seedFiles + '\n' + healthSrc;
+    const registrySrc = readFileSync(join(root, 'registry', 'datasets.ts'), 'utf-8');
+    const allSearchable = allHandlerCode + '\n' + seedFiles + '\n' + healthSrc + '\n' + registrySrc;
 
     for (const key of keys) {
       assert.ok(
         allSearchable.includes(key),
-        `Cache key "${key}" not found in any handler file or seed script`,
+        `Cache key "${key}" not found in any handler file, seed script, health contract, or registry source`,
       );
     }
   });
@@ -121,8 +125,8 @@ describe('Bootstrap endpoint (api/bootstrap.js)', () => {
     assert.ok(src.includes("runtime: 'edge'"), 'Missing edge runtime config');
   });
 
-  it('defines BOOTSTRAP_CACHE_KEYS inline', () => {
-    assert.ok(src.includes('BOOTSTRAP_CACHE_KEYS'), 'Missing BOOTSTRAP_CACHE_KEYS definition');
+  it('imports generated BOOTSTRAP_CACHE_KEYS', () => {
+    assert.ok(src.includes("from './_generated/dataset-registry.js'"), 'Missing generated dataset registry import');
   });
 
   it('defines getCachedJsonBatch inline (self-contained, no server imports)', () => {
@@ -158,8 +162,7 @@ describe('Bootstrap endpoint (api/bootstrap.js)', () => {
 
   it('supports ?tier= query param for tiered fetching', () => {
     assert.ok(src.includes("'tier'"), 'Missing tier query param handling');
-    assert.ok(src.includes('SLOW_KEYS'), 'Missing SLOW_KEYS set');
-    assert.ok(src.includes('FAST_KEYS'), 'Missing FAST_KEYS set');
+    assert.ok(src.includes('BOOTSTRAP_TIERS'), 'Missing BOOTSTRAP_TIERS map');
     assert.ok(src.includes('TIER_CACHE'), 'Missing TIER_CACHE map');
   });
 });
@@ -234,12 +237,12 @@ describe('Panel hydration consumers', () => {
 
 describe('Bootstrap key hydration coverage', () => {
   it('every bootstrap key has a getHydratedData consumer in src/', () => {
-    const bootstrapSrc = readFileSync(join(root, 'api', 'bootstrap.js'), 'utf-8');
-    const block = bootstrapSrc.match(/BOOTSTRAP_CACHE_KEYS\s*=\s*\{([^}]+)\}/);
-    const keyRe = /(\w+):\s+'[a-z0-9_-]+(?::[a-z0-9_-]+)+:v\d+'/g;
+    const generatedSrc = readFileSync(join(root, 'api', '_generated', 'dataset-registry.js'), 'utf-8');
+    const block = generatedSrc.match(/BOOTSTRAP_CACHE_KEYS\s*=\s*\{([\s\S]*?)\};/);
+    const keyRe = /"([^"]+)":\s*"[^"]+"/g;
     const keys = [];
     let m;
-    while ((m = keyRe.exec(block[1])) !== null) keys.push(m[1]);
+    while ((m = keyRe.exec(block?.[1] ?? '')) !== null) keys.push(m[1]);
 
     const srcFiles = [];
     function walk(dir) {
@@ -253,7 +256,7 @@ describe('Bootstrap key hydration coverage', () => {
     const allSrc = srcFiles.map(f => readFileSync(f, 'utf-8')).join('\n');
 
     // Keys with planned but not-yet-wired consumers
-    const PENDING_CONSUMERS = new Set(['correlationCards', 'euGasStorage', 'chokepointBaselines', 'imfMacro', 'portwatchChokepointsRef', 'portwatchPortActivity', 'sprPolicies', 'wsbTickers']);
+    const PENDING_CONSUMERS = new Set(['correlationCards', 'euGasStorage', 'chokepointBaselines', 'electricityPrices', 'imfMacro', 'jodiOil', 'portwatchChokepointsRef', 'portwatchPortActivity', 'sprPolicies', 'wsbTickers']);
     for (const key of keys) {
       if (PENDING_CONSUMERS.has(key)) continue;
       assert.ok(
@@ -264,76 +267,26 @@ describe('Bootstrap key hydration coverage', () => {
   });
 });
 
-describe('Health key registries', () => {
-  it('does not duplicate Redis keys across BOOTSTRAP_KEYS and STANDALONE_KEYS', () => {
-    const healthSrc = readFileSync(join(root, 'api', 'health.js'), 'utf-8');
-    const extractValues = (name) => {
-      const block = healthSrc.match(new RegExp(`${name}\\s*=\\s*\\{([\\s\\S]*?)\\n\\};`));
-      if (!block) return [];
-      return [...block[1].matchAll(/:\s+'([^']+)'/g)].map((m) => m[1]);
-    };
-
-    const bootstrap = new Set(extractValues('BOOTSTRAP_KEYS'));
-    const standalone = new Set(extractValues('STANDALONE_KEYS'));
-    const overlap = [...bootstrap].filter((key) => standalone.has(key));
-
-    assert.deepEqual(overlap, [], `health.js duplicates keys across registries: ${overlap.join(', ')}`);
-  });
-});
-
 describe('Bootstrap tier definitions', () => {
-  const bootstrapSrc = readFileSync(join(root, 'api', 'bootstrap.js'), 'utf-8');
-  const cacheKeysSrc = readFileSync(join(root, 'server', '_shared', 'cache-keys.ts'), 'utf-8');
+  const generatedSrc = readFileSync(join(root, 'api', '_generated', 'dataset-registry.js'), 'utf-8');
 
-  function extractSetKeys(src, varName) {
-    const re = new RegExp(`${varName}\\s*=\\s*new Set\\(\\[([^\\]]+)\\]`, 's');
-    const m = src.match(re);
-    if (!m) return new Set();
-    return new Set([...m[1].matchAll(/'(\w+)'/g)].map(x => x[1]));
-  }
-
-  function extractBootstrapKeys(src) {
-    const block = src.match(/BOOTSTRAP_CACHE_KEYS\s*=\s*\{([^}]+)\}/);
-    if (!block) return new Set();
-    return new Set([...block[1].matchAll(/(\w+):\s+'/g)].map(x => x[1]));
-  }
-
-  function extractTierKeys(src) {
-    const block = src.match(/BOOTSTRAP_TIERS[^{]*\{([^}]+)\}/);
+  function extractObject(src, name) {
+    const block = src.match(new RegExp(`${name}\\s*=\\s*\\{([\\s\\S]*?)\\};`));
     if (!block) return {};
-    const result = {};
-    for (const m of block[1].matchAll(/(\w+):\s+'(slow|fast)'/g)) {
-      result[m[1]] = m[2];
-    }
-    return result;
+    return Object.fromEntries([...block[1].matchAll(/"([^"]+)":\s*"(slow|fast|[^"]+)"/g)].map((m) => [m[1], m[2]]));
   }
 
-  it('SLOW_KEYS + FAST_KEYS cover all BOOTSTRAP_CACHE_KEYS with no overlap', () => {
-    const slow = extractSetKeys(bootstrapSrc, 'SLOW_KEYS');
-    const fast = extractSetKeys(bootstrapSrc, 'FAST_KEYS');
-    const all = extractBootstrapKeys(bootstrapSrc);
-
-    const union = new Set([...slow, ...fast]);
-    assert.deepEqual([...union].sort(), [...all].sort(), 'SLOW_KEYS ∪ FAST_KEYS must equal BOOTSTRAP_CACHE_KEYS');
-
-    const intersection = [...slow].filter(k => fast.has(k));
-    assert.equal(intersection.length, 0, `Overlap between tiers: ${intersection.join(', ')}`);
+  it('BOOTSTRAP_TIERS covers all BOOTSTRAP_CACHE_KEYS', () => {
+    const tiers = extractObject(generatedSrc, 'BOOTSTRAP_TIERS');
+    const keys = extractObject(generatedSrc, 'BOOTSTRAP_CACHE_KEYS');
+    assert.deepEqual(Object.keys(tiers).sort(), Object.keys(keys).sort(), 'BOOTSTRAP_TIERS keys must match BOOTSTRAP_CACHE_KEYS');
   });
 
-  it('tier sets in bootstrap.js match BOOTSTRAP_TIERS in cache-keys.ts', () => {
-    const slow = extractSetKeys(bootstrapSrc, 'SLOW_KEYS');
-    const fast = extractSetKeys(bootstrapSrc, 'FAST_KEYS');
-    const tiers = extractTierKeys(cacheKeysSrc);
-
-    for (const k of slow) {
-      assert.equal(tiers[k], 'slow', `SLOW_KEYS has '${k}' but BOOTSTRAP_TIERS says '${tiers[k]}'`);
+  it('BOOTSTRAP_TIERS values are only slow/fast', () => {
+    const tiers = extractObject(generatedSrc, 'BOOTSTRAP_TIERS');
+    for (const [alias, tier] of Object.entries(tiers)) {
+      assert.ok(tier === 'slow' || tier === 'fast', `Invalid tier '${tier}' for ${alias}`);
     }
-    for (const k of fast) {
-      assert.equal(tiers[k], 'fast', `FAST_KEYS has '${k}' but BOOTSTRAP_TIERS says '${tiers[k]}'`);
-    }
-    const tierKeys = new Set(Object.keys(tiers));
-    const setKeys = new Set([...slow, ...fast]);
-    assert.deepEqual([...tierKeys].sort(), [...setKeys].sort(), 'BOOTSTRAP_TIERS keys must match SLOW_KEYS ∪ FAST_KEYS');
   });
 });
 

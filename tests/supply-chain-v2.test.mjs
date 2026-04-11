@@ -153,24 +153,26 @@ describe('OpenAPI spec includes aisDisruptions', () => {
 describe('Cache keys bumped to v2', () => {
   const bootstrapSrc = readSrc('api/bootstrap.js');
   const cacheKeysSrc = readSrc('server/_shared/cache-keys.ts');
+  const generatedBootstrapSrc = readSrc('server/_shared/_generated/bootstrap-registry.ts');
   const chokepointSrc = readSrc('server/worldmonitor/supply-chain/v1/get-chokepoint-status.ts');
   const mineralsSrc = readSrc('server/worldmonitor/supply-chain/v1/get-critical-minerals.ts');
 
   it('bootstrap.js chokepoints key is v4', () => {
-    assert.match(bootstrapSrc, /chokepoints:\s*'supply_chain:chokepoints:v4'/);
+    assert.match(bootstrapSrc, /_generated\/dataset-registry\.js/);
+    assert.match(generatedBootstrapSrc, /"chokepoints":\s*"supply_chain:chokepoints:v4"/);
   });
 
   it('bootstrap.js minerals key is v2', () => {
-    assert.match(bootstrapSrc, /minerals:\s*'supply_chain:minerals:v2'/);
+    assert.match(generatedBootstrapSrc, /"minerals":\s*"supply_chain:minerals:v2"/);
   });
 
   it('cache-keys.ts chokepoints key is v4', () => {
-    // BOOTSTRAP_CACHE_KEYS must keep the raw string literal (bootstrap.test.mjs enforces string-literal values)
-    assert.match(cacheKeysSrc, /chokepoints:\s*'supply_chain:chokepoints:v4'/);
+    assert.match(cacheKeysSrc, /_generated\/bootstrap-registry/);
+    assert.match(generatedBootstrapSrc, /"chokepoints":\s*"supply_chain:chokepoints:v4"/);
   });
 
   it('cache-keys.ts minerals key is v2', () => {
-    assert.match(cacheKeysSrc, /minerals:\s*'supply_chain:minerals:v2'/);
+    assert.match(generatedBootstrapSrc, /"minerals":\s*"supply_chain:minerals:v2"/);
   });
 
   it('chokepoint handler uses CHOKEPOINT_STATUS_KEY constant', () => {
@@ -183,8 +185,8 @@ describe('Cache keys bumped to v2', () => {
   });
 
   it('no v1 cache keys remain for chokepoints or minerals', () => {
-    assert.doesNotMatch(bootstrapSrc, /supply_chain:chokepoints:v1/);
-    assert.doesNotMatch(bootstrapSrc, /supply_chain:minerals:v1/);
+    assert.doesNotMatch(generatedBootstrapSrc, /supply_chain:chokepoints:v1/);
+    assert.doesNotMatch(generatedBootstrapSrc, /supply_chain:minerals:v1/);
     assert.doesNotMatch(cacheKeysSrc, /supply_chain:chokepoints:v1/);
     assert.doesNotMatch(cacheKeysSrc, /supply_chain:minerals:v1/);
   });
