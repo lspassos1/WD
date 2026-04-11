@@ -594,7 +594,7 @@ function buildDatasets(): DatasetContract[] {
   }
 
   for (const [logicalName, redisKey] of Object.entries(HEALTH_BOOTSTRAP_ADDITIONS)) {
-    register(logicalName, redisKey).health = { bucket: 'bootstrap', onDemand: true };
+    register(logicalName, redisKey).health = { bucket: 'standalone', onDemand: true };
   }
 
   for (const [logicalName, redisKey] of Object.entries(HEALTH_STANDALONE_KEYS)) {

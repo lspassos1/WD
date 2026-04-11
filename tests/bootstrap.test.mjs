@@ -116,6 +116,24 @@ describe('Bootstrap cache key registry', () => {
       );
     }
   });
+
+  it('keeps on-demand health additions in standalone health bucket', () => {
+    const additions = ['cryptoSectors', 'ddosAttacks', 'economicStress', 'trafficAnomalies'];
+    for (const logicalName of additions) {
+      assert.ok(
+        !(logicalName in healthRegistry.HEALTH_BOOTSTRAP_KEYS),
+        `${logicalName} should not be classified as bootstrap health key`,
+      );
+      assert.ok(
+        logicalName in healthRegistry.HEALTH_STANDALONE_KEYS,
+        `${logicalName} should be classified as standalone health key`,
+      );
+      assert.ok(
+        healthRegistry.HEALTH_ON_DEMAND_KEYS.includes(logicalName),
+        `${logicalName} should remain marked on-demand`,
+      );
+    }
+  });
 });
 
 describe('Bootstrap endpoint (api/bootstrap.js)', () => {
