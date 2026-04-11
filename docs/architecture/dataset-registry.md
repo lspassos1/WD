@@ -54,4 +54,4 @@ Current stacked sequence in the fork:
 - `#10` `chore(registry): stabilize dataset contract foundation and bootstrap parity`
 - `#11` `refactor(health): load generated health registry in fork`
 - `#12` `ci(registry): enforce generated registry freshness in fork`
-- docs PR: update the contribution path and validation guidance after the code slices land
+- `#13` `docs(registry): document the full dataset workflow`
