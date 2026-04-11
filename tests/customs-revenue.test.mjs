@@ -55,8 +55,8 @@ describe('Customs revenue seed', () => {
   });
 
   it('seed-meta key strips :v1 for health.js compatibility', () => {
-    const healthSrc = readFileSync(join(root, 'api/health.js'), 'utf-8');
-    assert.match(healthSrc, /seed-meta:trade:customs-revenue/);
+    const healthRegistrySrc = readFileSync(join(root, 'api', '_generated', 'health-registry.js'), 'utf-8');
+    assert.match(healthRegistrySrc, /seed-meta:trade:customs-revenue/);
     assert.match(seedSrc, /trade:customs-revenue:v1/);
   });
 });

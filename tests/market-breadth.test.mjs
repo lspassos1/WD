@@ -11,6 +11,7 @@ describe('Market breadth bootstrap registration', () => {
   const cacheKeysSrc = readFileSync(join(root, 'server', '_shared', 'cache-keys.ts'), 'utf-8');
   const generatedBootstrapSrc = readFileSync(join(root, 'server', '_shared', '_generated', 'bootstrap-registry.ts'), 'utf-8');
   const generatedDatasetRegistrySrc = readFileSync(join(root, 'api', '_generated', 'dataset-registry.js'), 'utf-8');
+  const generatedHealthRegistrySrc = readFileSync(join(root, 'api', '_generated', 'health-registry.js'), 'utf-8');
   const bootstrapSrc = readFileSync(join(root, 'api', 'bootstrap.js'), 'utf-8');
   const healthSrc = readFileSync(join(root, 'api', 'health.js'), 'utf-8');
   const gatewaySrc = readFileSync(join(root, 'server', 'gateway.ts'), 'utf-8');
@@ -37,11 +38,12 @@ describe('Market breadth bootstrap registration', () => {
   });
 
   it('health.js has breadthHistory data key', () => {
-    assert.match(healthSrc, /breadthHistory:\s+'market:breadth-history:v1'/);
+    assert.match(healthSrc, /_generated\/health-registry\.js/);
+    assert.match(generatedHealthRegistrySrc, /"breadthHistory":\s*"market:breadth-history:v1"/);
   });
 
   it('health.js has breadthHistory seed-meta config', () => {
-    assert.match(healthSrc, /breadthHistory:\s+\{\s*key:\s+'seed-meta:market:breadth-history'/);
+    assert.match(generatedHealthRegistrySrc, /"breadthHistory":\s*\{\s*key:\s*"seed-meta:market:breadth-history"/);
   });
 
   it('gateway.ts has market breadth history cache tier', () => {
