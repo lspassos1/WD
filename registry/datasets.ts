@@ -221,7 +221,7 @@ function normalizeDomain(rawKey: string): string {
 }
 
 function extractVersionTag(key: string): `v${number}` | undefined {
-  const match = key.match(/(?:^|[:\\-])(v\\d+)(?:$|[:])/);
+  const match = key.match(/(?:^|[:-])(v\d+)(?:$|[:])/);
   return match?.[1] as `v${number}` | undefined;
 }
 

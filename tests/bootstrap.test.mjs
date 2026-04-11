@@ -8,8 +8,8 @@ const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
 
 describe('Bootstrap cache key registry', () => {
-  const cacheKeysPath = join(root, 'server', '_shared', '_generated', 'bootstrap-registry.ts');
-  const cacheKeysSrc = readFileSync(cacheKeysPath, 'utf-8');
+  const bootstrapRegistryTsPath = join(root, 'server', '_shared', '_generated', 'bootstrap-registry.ts');
+  const bootstrapRegistryTsSrc = readFileSync(bootstrapRegistryTsPath, 'utf-8');
   const generatedRegistrySrc = readFileSync(join(root, 'api', '_generated', 'dataset-registry.js'), 'utf-8');
   const bootstrapSrc = readFileSync(join(root, 'api', 'bootstrap.js'), 'utf-8');
   const generatedBlock = generatedRegistrySrc.match(/BOOTSTRAP_CACHE_KEYS[^=]*=\s*\{([\s\S]*?)\};/)?.[1] ?? '';
@@ -19,7 +19,7 @@ describe('Bootstrap cache key registry', () => {
     assert.ok(matches && matches.length >= 10, `Expected ≥10 keys, found ${matches?.length ?? 0}`);
   });
 
-  it('generated keys match server/_shared/cache-keys.ts exports', () => {
+  it('generated TS and JS registry files stay in parity', () => {
     const extractKeys = (src) => {
       const block = src.match(/BOOTSTRAP_CACHE_KEYS[^=]*=\s*\{([^}]+)\}/);
       if (!block) return {};
@@ -29,7 +29,7 @@ describe('Bootstrap cache key registry', () => {
       while ((m = re.exec(block[1])) !== null) keys[m[1]] = m[2];
       return keys;
     };
-    const canonical = extractKeys(cacheKeysSrc);
+    const canonical = extractKeys(bootstrapRegistryTsSrc);
     const generated = extractKeys(generatedRegistrySrc);
     assert.ok(Object.keys(canonical).length >= 10, 'Canonical registry too small');
     for (const [name, key] of Object.entries(canonical)) {
