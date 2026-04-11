@@ -2,10 +2,11 @@ import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync, readdirSync, statSync } from 'node:fs';
 import { dirname, resolve, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
+const healthRegistry = await import(pathToFileURL(join(root, 'api', '_generated', 'health-registry.js')).href);
 
 describe('Bootstrap cache key registry', () => {
   const bootstrapRegistryTsPath = join(root, 'server', '_shared', '_generated', 'bootstrap-registry.ts');
@@ -263,6 +264,56 @@ describe('Bootstrap key hydration coverage', () => {
         allSrc.includes(`getHydratedData('${key}')`),
         `Bootstrap key '${key}' has no getHydratedData('${key}') consumer in src/ — data is fetched but never used`,
       );
+    }
+  });
+});
+
+describe('Health key registries', () => {
+  const {
+    HEALTH_BOOTSTRAP_KEYS,
+    HEALTH_STANDALONE_KEYS,
+    HEALTH_SEED_META,
+    HEALTH_ON_DEMAND_KEYS,
+    HEALTH_EMPTY_OK_KEYS,
+    HEALTH_CASCADE_GROUPS,
+  } = healthRegistry;
+  const knownHealthKeys = new Set([
+    ...Object.keys(HEALTH_BOOTSTRAP_KEYS),
+    ...Object.keys(HEALTH_STANDALONE_KEYS),
+  ]);
+
+  it('api/health.js imports generated health artifacts', () => {
+    const healthSrc = readFileSync(join(root, 'api', 'health.js'), 'utf-8');
+    assert.ok(healthSrc.includes("from './_generated/health-registry.js'"), 'health.js should import generated health registry');
+  });
+
+  it('does not duplicate Redis keys across generated bootstrap and standalone registries', () => {
+    const bootstrap = new Set(Object.values(HEALTH_BOOTSTRAP_KEYS));
+    const standalone = new Set(Object.values(HEALTH_STANDALONE_KEYS));
+    const overlap = [...bootstrap].filter((key) => standalone.has(key));
+
+    assert.deepEqual(overlap, [], `generated health registry duplicates keys across registries: ${overlap.join(', ')}`);
+  });
+
+  it('seed metadata references generated health keys only', () => {
+    for (const name of Object.keys(HEALTH_SEED_META)) {
+      assert.ok(knownHealthKeys.has(name), `HEALTH_SEED_META entry '${name}' is not registered in a health key map`);
+    }
+  });
+
+  it('on-demand and empty-ok sets reference generated health keys only', () => {
+    for (const name of [...HEALTH_ON_DEMAND_KEYS, ...HEALTH_EMPTY_OK_KEYS]) {
+      assert.ok(knownHealthKeys.has(name), `health flag entry '${name}' is not registered in a health key map`);
+    }
+  });
+
+  it('cascade groups reference standalone keys and keep at least two members', () => {
+    for (const [name, members] of Object.entries(HEALTH_CASCADE_GROUPS)) {
+      assert.ok(HEALTH_STANDALONE_KEYS[name], `Cascade root '${name}' must be a standalone health key`);
+      assert.ok(Array.isArray(members) && members.length >= 2, `Cascade group '${name}' must include at least two datasets`);
+      for (const member of members) {
+        assert.ok(HEALTH_STANDALONE_KEYS[member], `Cascade member '${member}' must be a standalone health key`);
+      }
     }
   });
 });

@@ -529,12 +529,12 @@ describe('recoverFailedDatasets', () => {
 });
 
 describe('resilience static health registrations', () => {
-  const healthSrc = readFileSync(join(root, 'api', 'health.js'), 'utf8');
+  const healthRegistrySrc = readFileSync(join(root, 'api', '_generated', 'health-registry.js'), 'utf8');
   const seedHealthSrc = readFileSync(join(root, 'api', 'seed-health.js'), 'utf8');
 
   it('registers the manifest key and seed-meta in health.js', () => {
-    assert.match(healthSrc, /resilienceStaticIndex:\s+'resilience:static:index:v1'/);
-    assert.match(healthSrc, /seed-meta:resilience:static/);
+    assert.match(healthRegistrySrc, /"resilienceStaticIndex":\s*"resilience:static:index:v1"/);
+    assert.match(healthRegistrySrc, /"resilienceStaticIndex":\s*\{\s*key:\s*"seed-meta:resilience:static"/);
   });
 
   it('registers annual seed-health monitoring for resilience static', () => {
