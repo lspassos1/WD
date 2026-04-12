@@ -193,6 +193,24 @@ async function importRedisWithRegistry(entries) {
   };
 }
 
+async function importModuleWithCacheFillRegistry(relPath, entries) {
+  const tempDir = mkdtempSync(join(tmpdir(), 'wm-cache-fill-handler-registry-'));
+  const registryPath = join(tempDir, 'cache-fill-registry.ts');
+  writeFileSync(registryPath, buildCacheFillRegistryModule(entries));
+
+  const imported = await importPatchedTsModule(relPath, {
+    './_generated/cache-fill-registry': registryPath,
+  });
+
+  return {
+    ...imported,
+    cleanup() {
+      imported.cleanup();
+      rmSync(tempDir, { recursive: true, force: true });
+    },
+  };
+}
+
 function createRedisCommandHarness() {
   const store = new Map();
   const expirations = new Map();
@@ -1129,8 +1147,8 @@ describe('distributed cache-fill coordinator', { concurrency: 1 }, () => {
     return {
       [KEY]: {
         logicalName: 'riskScoresLive',
-        leaseMs: 200,
-        waitMs: 100,
+        leaseMs: 300,
+        waitMs: 200,
         pollMinMs: 5,
         pollMaxMs: 10,
         fallback: 'return_null',
@@ -1460,10 +1478,29 @@ describe('distributed cache-fill coordinator', { concurrency: 1 }, () => {
 });
 
 describe('coordinator-enabled handler fallbacks', { concurrency: 1 }, () => {
+  const handlerFallbackRegistry = {
+    'infra:service-statuses:v1': {
+      logicalName: 'serviceStatuses',
+      leaseMs: 80,
+      waitMs: 20,
+      pollMinMs: 5,
+      pollMaxMs: 10,
+      fallback: 'return_null',
+    },
+    'risk:scores:sebuf:v1': {
+      logicalName: 'riskScoresLive',
+      leaseMs: 80,
+      waitMs: 20,
+      pollMinMs: 5,
+      pollMaxMs: 10,
+      fallback: 'return_null',
+    },
+  };
+
   it('list-service-statuses falls back to the module cache after coordinator timeout', async () => {
-    const { module, cleanup } = await importPatchedTsModule(
+    const { module, cleanup } = await importModuleWithCacheFillRegistry(
       'server/worldmonitor/infrastructure/v1/list-service-statuses.ts',
-      {},
+      handlerFallbackRegistry,
     );
     const restoreEnv = withEnv({
       UPSTASH_REDIS_REST_URL: 'https://redis.test',
@@ -1497,9 +1534,9 @@ describe('coordinator-enabled handler fallbacks', { concurrency: 1 }, () => {
   });
 
   it('get-risk-scores falls back to stale data after coordinator timeout', async () => {
-    const { module, cleanup } = await importPatchedTsModule(
+    const { module, cleanup } = await importModuleWithCacheFillRegistry(
       'server/worldmonitor/intelligence/v1/get-risk-scores.ts',
-      {},
+      handlerFallbackRegistry,
     );
     const restoreEnv = withEnv({
       UPSTASH_REDIS_REST_URL: 'https://redis.test',
