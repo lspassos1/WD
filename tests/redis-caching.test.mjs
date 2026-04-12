@@ -1,6 +1,6 @@
 import { describe, it } from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { basename, dirname, join, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { fileURLToPath, pathToFileURL } from 'node:url';
@@ -17,6 +17,51 @@ function jsonResponse(payload, ok = true) {
       return payload;
     },
   };
+}
+
+function parseRedisCommand(url, init = {}) {
+  const raw = String(url);
+  if (raw.includes('/get/')) {
+    return {
+      verb: 'GET',
+      key: decodeURIComponent(raw.split('/get/').pop() || ''),
+      args: [],
+    };
+  }
+  if (raw.includes('/set/')) {
+    const parts = raw.split('/set/').pop()?.split('/') || [];
+    return {
+      verb: 'SET',
+      key: decodeURIComponent(parts[0] || ''),
+      args: [decodeURIComponent(parts[1] || ''), ...parts.slice(2)],
+    };
+  }
+
+  try {
+    const parsed = new URL(raw);
+    if ((parsed.pathname === '/' || parsed.pathname === '') && typeof init.body === 'string') {
+      const command = JSON.parse(String(init.body));
+      if (Array.isArray(command) && command.length > 0) {
+        const verb = String(command[0]).toUpperCase();
+        if (verb === 'EVAL') {
+          return {
+            verb,
+            key: String(command[3] || ''),
+            args: command.slice(4),
+          };
+        }
+        return {
+          verb,
+          key: typeof command[1] === 'string' ? command[1] : '',
+          args: command.slice(2),
+        };
+      }
+    }
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 function withEnv(overrides) {
@@ -45,17 +90,66 @@ async function importRedisFresh() {
 }
 
 async function importPatchedTsModule(relPath, replacements) {
-  const sourcePath = resolve(root, relPath);
-  let source = readFileSync(sourcePath, 'utf-8');
+  const tempDir = mkdtempSync(join(tmpdir(), 'wm-ts-module-'));
+  const materialized = new Map();
 
-  for (const [specifier, targetPath] of Object.entries(replacements)) {
-    source = source.replaceAll(`'${specifier}'`, `'${pathToFileURL(targetPath).href}'`);
+  function resolveRelativeModule(fromPath, specifier) {
+    const base = resolve(dirname(fromPath), specifier);
+    const candidates = [
+      base,
+      `${base}.ts`,
+      `${base}.js`,
+      `${base}.mjs`,
+      join(base, 'index.ts'),
+      join(base, 'index.js'),
+      join(base, 'index.mjs'),
+    ];
+    return candidates.find((candidate) => existsSync(candidate)) ?? null;
   }
 
-  const tempDir = mkdtempSync(join(tmpdir(), 'wm-ts-module-'));
-  const tempPath = join(tempDir, basename(sourcePath));
-  writeFileSync(tempPath, source);
+  function rewriteSpecifier(sourcePath, specifier) {
+    const replacement = replacements[specifier];
+    if (replacement) {
+      return pathToFileURL(materializeModule(replacement)).href;
+    }
+    if (!specifier.startsWith('.')) {
+      return null;
+    }
+    const resolved = resolveRelativeModule(sourcePath, specifier);
+    if (!resolved) {
+      return null;
+    }
+    return pathToFileURL(materializeModule(resolved)).href;
+  }
 
+  function rewriteSource(sourcePath, source) {
+    return source
+      .replace(/from\s+['"]([^'"]+)['"]/g, (full, specifier) => {
+        const rewritten = rewriteSpecifier(sourcePath, specifier);
+        return rewritten ? full.replace(specifier, rewritten) : full;
+      })
+      .replace(/import\(\s*['"]([^'"]+)['"]\s*\)/g, (full, specifier) => {
+        const rewritten = rewriteSpecifier(sourcePath, specifier);
+        return rewritten ? full.replace(specifier, rewritten) : full;
+      })
+      .replace(/from\s+(['"][^'"]+\.json['"])(?!\s+with\s+\{)/g, 'from $1 with { type: \'json\' }');
+  }
+
+  function materializeModule(sourcePath) {
+    const cached = materialized.get(sourcePath);
+    if (cached) return cached;
+
+    const relOutPath = sourcePath.startsWith(root) ? sourcePath.slice(root.length + 1) : basename(sourcePath);
+    const tempPath = join(tempDir, relOutPath);
+    materialized.set(sourcePath, tempPath);
+
+    const source = rewriteSource(sourcePath, readFileSync(sourcePath, 'utf-8'));
+    mkdirSync(dirname(tempPath), { recursive: true });
+    writeFileSync(tempPath, source);
+    return tempPath;
+  }
+
+  const tempPath = materializeModule(resolve(root, relPath));
   const module = await import(`${pathToFileURL(tempPath).href}?t=${Date.now()}-${Math.random().toString(16).slice(2)}`);
   return {
     module,
@@ -63,6 +157,145 @@ async function importPatchedTsModule(relPath, replacements) {
       rmSync(tempDir, { recursive: true, force: true });
     },
   };
+}
+
+function buildCacheFillRegistryModule(entries) {
+  return [
+    "export type CacheFillFallback = 'return_null' | 'hedge' | 'throw';",
+    'export interface CacheFillRegistryEntry {',
+    '  logicalName: string;',
+    '  leaseMs: number;',
+    '  waitMs: number;',
+    '  pollMinMs: number;',
+    '  pollMaxMs: number;',
+    '  fallback: CacheFillFallback;',
+    '}',
+    `export const CACHE_FILL_REGISTRY: Record<string, CacheFillRegistryEntry> = ${JSON.stringify(entries, null, 2)};`,
+    '',
+  ].join('\n');
+}
+
+async function importRedisWithRegistry(entries) {
+  const tempDir = mkdtempSync(join(tmpdir(), 'wm-cache-fill-registry-'));
+  const registryPath = join(tempDir, 'cache-fill-registry.ts');
+  writeFileSync(registryPath, buildCacheFillRegistryModule(entries));
+
+  const imported = await importPatchedTsModule('server/_shared/redis.ts', {
+    './_generated/cache-fill-registry.ts': registryPath,
+    './hash.ts': resolve(root, 'server/_shared/hash.ts'),
+  });
+
+  return {
+    ...imported,
+    cleanup() {
+      imported.cleanup();
+      rmSync(tempDir, { recursive: true, force: true });
+    },
+  };
+}
+
+function createRedisCommandHarness() {
+  const store = new Map();
+  const expirations = new Map();
+  const commandLog = [];
+
+  const purgeExpired = (key) => {
+    const expiresAt = expirations.get(key);
+    if (expiresAt != null && expiresAt <= Date.now()) {
+      store.delete(key);
+      expirations.delete(key);
+    }
+  };
+
+  const read = (key) => {
+    purgeExpired(key);
+    return store.get(key) ?? undefined;
+  };
+
+  const write = (key, value, args = []) => {
+    purgeExpired(key);
+    const flags = args.map((item) => String(item).toUpperCase());
+    if (flags.includes('NX') && store.has(key)) {
+      return { result: null };
+    }
+
+    store.set(key, value);
+    expirations.delete(key);
+
+    const exIndex = flags.indexOf('EX');
+    if (exIndex !== -1) {
+      expirations.set(key, Date.now() + Number(args[exIndex + 1] ?? 0) * 1000);
+    }
+    const pxIndex = flags.indexOf('PX');
+    if (pxIndex !== -1) {
+      expirations.set(key, Date.now() + Number(args[pxIndex + 1] ?? 0));
+    }
+    return { result: 'OK' };
+  };
+
+  const del = (key) => {
+    purgeExpired(key);
+    const existed = store.delete(key);
+    expirations.delete(key);
+    return { result: existed ? 1 : 0 };
+  };
+
+  return {
+    store,
+    commandLog,
+    setRaw(key, value) {
+      store.set(key, value);
+    },
+    fetch: async (url, init = {}) => {
+      const raw = String(url);
+      const command = parseRedisCommand(url, init);
+      if (command?.verb) {
+        commandLog.push({ verb: command.verb, key: command.key, args: [...command.args] });
+      }
+
+      if (raw.includes('/get/')) {
+        const key = command?.key || decodeURIComponent(raw.split('/get/').pop() || '');
+        return jsonResponse({ result: read(key) });
+      }
+
+      if (command?.verb === 'SET') {
+        return jsonResponse(write(command.key, String(command.args[0] ?? ''), command.args.slice(1)));
+      }
+
+      if (command?.verb === 'DEL') {
+        return jsonResponse(del(command.key));
+      }
+
+      if (command?.verb === 'EVAL') {
+        const token = String(command.args[0] ?? '');
+        if (read(command.key) === token) {
+          return jsonResponse(del(command.key));
+        }
+        return jsonResponse({ result: 0 });
+      }
+
+      if (raw.includes('/pipeline')) {
+        const commands = JSON.parse(String(init.body || '[]'));
+        return jsonResponse(commands.map((entry) => {
+          const [verb, key] = entry;
+          if (String(verb).toUpperCase() === 'GET') {
+            return { result: read(String(key)) };
+          }
+          throw new Error(`Unexpected pipeline command: ${verb}`);
+        }));
+      }
+
+      throw new Error(`Unexpected fetch URL: ${raw}`);
+    },
+  };
+}
+
+async function deriveLockKeyForTest(key) {
+  const buffer = await crypto.subtle.digest('SHA-256', new TextEncoder().encode(key));
+  const hex = Array.from(new Uint8Array(buffer))
+    .map((value) => value.toString(16).padStart(2, '0'))
+    .join('');
+  return `lock:fill:v1:${hex.slice(0, 24)}`;
 }
 
 describe('redis caching behavior', { concurrency: 1 }, () => {
@@ -78,13 +311,14 @@ describe('redis caching behavior', { concurrency: 1 }, () => {
 
     let getCalls = 0;
     let setCalls = 0;
-    globalThis.fetch = async (url) => {
+    globalThis.fetch = async (url, init = {}) => {
       const raw = String(url);
+      const command = parseRedisCommand(url, init);
       if (raw.includes('/get/')) {
         getCalls += 1;
         return jsonResponse({ result: undefined });
       }
-      if (raw.includes('/set/')) {
+      if (command?.verb === 'SET') {
         setCalls += 1;
         return jsonResponse({ result: 'OK' });
       }
@@ -164,10 +398,14 @@ describe('cachedFetchJsonWithMeta source labeling', { concurrency: 1 }, () => {
     });
     const originalFetch = globalThis.fetch;
 
-    globalThis.fetch = async (url) => {
+    globalThis.fetch = async (url, init = {}) => {
       const raw = String(url);
+      const command = parseRedisCommand(url, init);
       if (raw.includes('/get/')) {
         return jsonResponse({ result: JSON.stringify({ value: 'cached-data' }) });
+      }
+      if (command?.verb === 'SET') {
+        return jsonResponse({ result: 'OK' });
       }
       throw new Error(`Unexpected fetch URL: ${raw}`);
     };
@@ -198,10 +436,11 @@ describe('cachedFetchJsonWithMeta source labeling', { concurrency: 1 }, () => {
     });
     const originalFetch = globalThis.fetch;
 
-    globalThis.fetch = async (url) => {
+    globalThis.fetch = async (url, init = {}) => {
       const raw = String(url);
+      const command = parseRedisCommand(url, init);
       if (raw.includes('/get/')) return jsonResponse({ result: undefined });
-      if (raw.includes('/set/')) return jsonResponse({ result: 'OK' });
+      if (command?.verb === 'SET') return jsonResponse({ result: 'OK' });
       throw new Error(`Unexpected fetch URL: ${raw}`);
     };
 
@@ -228,10 +467,11 @@ describe('cachedFetchJsonWithMeta source labeling', { concurrency: 1 }, () => {
     });
     const originalFetch = globalThis.fetch;
 
-    globalThis.fetch = async (url) => {
+    globalThis.fetch = async (url, init = {}) => {
       const raw = String(url);
+      const command = parseRedisCommand(url, init);
       if (raw.includes('/get/')) return jsonResponse({ result: undefined });
-      if (raw.includes('/set/')) return jsonResponse({ result: 'OK' });
+      if (command?.verb === 'SET') return jsonResponse({ result: 'OK' });
       throw new Error(`Unexpected fetch URL: ${raw}`);
     };
 
@@ -274,15 +514,16 @@ describe('cachedFetchJsonWithMeta source labeling', { concurrency: 1 }, () => {
 
     // First call: cache miss. Second call (from a "different instance"): cache hit.
     let getCalls = 0;
-    globalThis.fetch = async (url) => {
+    globalThis.fetch = async (url, init = {}) => {
       const raw = String(url);
+      const command = parseRedisCommand(url, init);
       if (raw.includes('/get/')) {
         getCalls += 1;
         if (getCalls === 1) return jsonResponse({ result: undefined });
         // Simulate another instance populating cache between calls
         return jsonResponse({ result: JSON.stringify({ value: 'from-other-instance' }) });
       }
-      if (raw.includes('/set/')) return jsonResponse({ result: 'OK' });
+      if (command?.verb === 'SET') return jsonResponse({ result: 'OK' });
       throw new Error(`Unexpected fetch URL: ${raw}`);
     };
 
@@ -320,18 +561,16 @@ describe('negative-result caching', { concurrency: 1 }, () => {
     const originalFetch = globalThis.fetch;
 
     const store = new Map();
-    globalThis.fetch = async (url) => {
+    globalThis.fetch = async (url, init = {}) => {
       const raw = String(url);
+      const command = parseRedisCommand(url, init);
       if (raw.includes('/get/')) {
         const key = decodeURIComponent(raw.split('/get/').pop() || '');
         const val = store.get(key);
         return jsonResponse({ result: val ?? undefined });
       }
-      if (raw.includes('/set/')) {
-        const parts = raw.split('/set/').pop().split('/');
-        const key = decodeURIComponent(parts[0]);
-        const value = decodeURIComponent(parts[1]);
-        store.set(key, value);
+      if (command?.verb === 'SET') {
+        store.set(command.key, String(command.args[0] ?? ''));
         return jsonResponse({ result: 'OK' });
       }
       throw new Error(`Unexpected fetch URL: ${raw}`);
@@ -369,18 +608,16 @@ describe('negative-result caching', { concurrency: 1 }, () => {
     const originalFetch = globalThis.fetch;
 
     const store = new Map();
-    globalThis.fetch = async (url) => {
+    globalThis.fetch = async (url, init = {}) => {
       const raw = String(url);
+      const command = parseRedisCommand(url, init);
       if (raw.includes('/get/')) {
         const key = decodeURIComponent(raw.split('/get/').pop() || '');
         const val = store.get(key);
         return jsonResponse({ result: val ?? undefined });
       }
-      if (raw.includes('/set/')) {
-        const parts = raw.split('/set/').pop().split('/');
-        const key = decodeURIComponent(parts[0]);
-        const value = decodeURIComponent(parts[1]);
-        store.set(key, value);
+      if (command?.verb === 'SET') {
+        store.set(command.key, String(command.args[0] ?? ''));
         return jsonResponse({ result: 'OK' });
       }
       throw new Error(`Unexpected fetch URL: ${raw}`);
@@ -414,10 +651,11 @@ describe('negative-result caching', { concurrency: 1 }, () => {
     const originalFetch = globalThis.fetch;
 
     let setCalls = 0;
-    globalThis.fetch = async (url) => {
+    globalThis.fetch = async (url, init = {}) => {
       const raw = String(url);
+      const command = parseRedisCommand(url, init);
       if (raw.includes('/get/')) return jsonResponse({ result: undefined });
-      if (raw.includes('/set/')) {
+      if (command?.verb === 'SET') {
         setCalls += 1;
         return jsonResponse({ result: 'OK' });
       }
@@ -514,8 +752,9 @@ describe('theater posture caching behavior', { concurrency: 1 }, () => {
 
     const staleData = { theaters: [{ theater: 'stale-test', postureLevel: 'normal', activeFlights: 1, trackedVessels: 0, activeOperations: [], assessedAt: 1 }] };
 
-    globalThis.fetch = async (url) => {
+    globalThis.fetch = async (url, init = {}) => {
       const raw = String(url);
+      const command = parseRedisCommand(url, init);
       if (raw.includes('/get/')) {
         const key = decodeURIComponent(raw.split('/get/').pop() || '');
         if (key === 'theater-posture:sebuf:v1') {
@@ -526,7 +765,7 @@ describe('theater posture caching behavior', { concurrency: 1 }, () => {
         }
         return jsonResponse({ result: undefined });
       }
-      if (raw.includes('/set/')) {
+      if (command?.verb === 'SET') {
         return jsonResponse({ result: 'OK' });
       }
       if (raw.includes('opensky-network.org')) {
@@ -558,12 +797,13 @@ describe('theater posture caching behavior', { concurrency: 1 }, () => {
     });
     const originalFetch = globalThis.fetch;
 
-    globalThis.fetch = async (url) => {
+    globalThis.fetch = async (url, init = {}) => {
       const raw = String(url);
+      const command = parseRedisCommand(url, init);
       if (raw.includes('/get/')) {
         return jsonResponse({ result: undefined });
       }
-      if (raw.includes('/set/')) {
+      if (command?.verb === 'SET') {
         return jsonResponse({ result: 'OK' });
       }
       if (raw.includes('opensky-network.org')) {
@@ -591,12 +831,13 @@ describe('theater posture caching behavior', { concurrency: 1 }, () => {
     const originalFetch = globalThis.fetch;
 
     const cacheWrites = [];
-    globalThis.fetch = async (url) => {
+    globalThis.fetch = async (url, init = {}) => {
       const raw = String(url);
+      const command = parseRedisCommand(url, init);
       if (raw.includes('/get/')) {
         return jsonResponse({ result: undefined });
       }
-      if (raw.includes('/set/') || raw.includes('/pipeline')) {
+      if (command?.verb === 'SET' || raw.includes('/pipeline')) {
         cacheWrites.push(raw);
         return jsonResponse({ result: 'OK' });
       }
@@ -629,11 +870,13 @@ describe('country intel brief caching behavior', { concurrency: 1 }, () => {
     });
   }
 
-  function parseRedisKey(rawUrl, op) {
+  function parseRedisKey(rawUrl, op, init = {}) {
+    const command = parseRedisCommand(rawUrl, init);
+    if (command?.verb === op.toUpperCase()) return command.key;
     const marker = `/${op}/`;
-    const idx = rawUrl.indexOf(marker);
+    const idx = String(rawUrl).indexOf(marker);
     if (idx === -1) return '';
-    return decodeURIComponent(rawUrl.slice(idx + marker.length).split('/')[0] || '');
+    return decodeURIComponent(String(rawUrl).slice(idx + marker.length).split('/')[0] || '');
   }
 
   function makeCtx(url) {
@@ -662,13 +905,13 @@ describe('country intel brief caching behavior', { concurrency: 1 }, () => {
         return jsonResponse({});
       }
       if (raw.includes('/get/')) {
-        const key = parseRedisKey(raw, 'get');
+        const key = parseRedisKey(raw, 'get', init);
         return jsonResponse({ result: store.get(key) });
       }
-      if (raw.includes('/set/')) {
-        const key = parseRedisKey(raw, 'set');
-        const encodedValue = raw.slice(raw.indexOf('/set/') + 5).split('/')[1] || '';
-        store.set(key, decodeURIComponent(encodedValue));
+      const command = parseRedisCommand(url, init);
+      if (command?.verb === 'SET') {
+        const key = parseRedisKey(raw, 'set', init);
+        store.set(key, String(command.args[0] ?? ''));
         if (!key.startsWith('seed-meta:')) setKeys.push(key);
         return jsonResponse({ result: 'OK' });
       }
@@ -726,13 +969,13 @@ describe('country intel brief caching behavior', { concurrency: 1 }, () => {
         return jsonResponse({});
       }
       if (raw.includes('/get/')) {
-        const key = parseRedisKey(raw, 'get');
+        const key = parseRedisKey(raw, 'get', init);
         return jsonResponse({ result: store.get(key) });
       }
-      if (raw.includes('/set/')) {
-        const key = parseRedisKey(raw, 'set');
-        const encodedValue = raw.slice(raw.indexOf('/set/') + 5).split('/')[1] || '';
-        store.set(key, decodeURIComponent(encodedValue));
+      const command = parseRedisCommand(url, init);
+      if (command?.verb === 'SET') {
+        const key = parseRedisKey(raw, 'set', init);
+        store.set(key, String(command.args[0] ?? ''));
         if (!key.startsWith('seed-meta:')) setKeys.push(key);
         return jsonResponse({ result: 'OK' });
       }
@@ -874,6 +1117,343 @@ describe('military flights bbox behavior', { concurrency: 1 }, () => {
       );
     } finally {
       cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+});
+
+describe('distributed cache-fill coordinator', { concurrency: 1 }, () => {
+  const KEY = 'risk:scores:sebuf:v1';
+
+  function coordinatorRegistry(overrides = {}) {
+    return {
+      [KEY]: {
+        logicalName: 'riskScoresLive',
+        leaseMs: 120,
+        waitMs: 40,
+        pollMinMs: 5,
+        pollMaxMs: 10,
+        fallback: 'return_null',
+        ...overrides,
+      },
+    };
+  }
+
+  it('collapses cross-instance cold misses into one leader fetch', async () => {
+    const redisA = await importRedisWithRegistry(coordinatorRegistry());
+    const redisB = await importRedisWithRegistry(coordinatorRegistry());
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const harness = createRedisCommandHarness();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = harness.fetch;
+
+    let fetcherCalls = 0;
+    try {
+      const [leader, follower] = await Promise.all([
+        redisA.module.cachedFetchJson(KEY, 60, async () => {
+          fetcherCalls += 1;
+          await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+          return { value: 'leader' };
+        }),
+        redisB.module.cachedFetchJson(KEY, 60, async () => {
+          fetcherCalls += 1;
+          return { value: 'should-not-run' };
+        }),
+      ]);
+
+      assert.equal(fetcherCalls, 1, 'only one instance should execute the upstream fetcher');
+      assert.deepEqual(leader, { value: 'leader' });
+      assert.deepEqual(follower, { value: 'leader' });
+    } finally {
+      redisA.cleanup();
+      redisB.cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('rechecks cache after lock acquisition before running the fetcher', async () => {
+    const redis = await importRedisWithRegistry(coordinatorRegistry());
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const harness = createRedisCommandHarness();
+    const originalFetch = globalThis.fetch;
+
+    let injected = false;
+    globalThis.fetch = async (url, init = {}) => {
+      const command = parseRedisCommand(url, init);
+      if (!injected && command?.verb === 'SET' && command.key.startsWith('lock:fill:v1:')) {
+        injected = true;
+        harness.setRaw(KEY, JSON.stringify({ value: 'published-between-miss-and-lock' }));
+      }
+      return harness.fetch(url, init);
+    };
+
+    try {
+      let fetcherCalls = 0;
+      const result = await redis.module.cachedFetchJson(KEY, 60, async () => {
+        fetcherCalls += 1;
+        return { value: 'should-not-run' };
+      });
+
+      assert.equal(fetcherCalls, 0, 'mandatory recheck should suppress stale leader fetches');
+      assert.deepEqual(result, { value: 'published-between-miss-and-lock' });
+    } finally {
+      redis.cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('returns null to followers when the leader publishes the negative sentinel', async () => {
+    const redisA = await importRedisWithRegistry(coordinatorRegistry());
+    const redisB = await importRedisWithRegistry(coordinatorRegistry());
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const harness = createRedisCommandHarness();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = harness.fetch;
+
+    let fetcherCalls = 0;
+    try {
+      const [leader, follower] = await Promise.all([
+        redisA.module.cachedFetchJson(KEY, 60, async () => {
+          fetcherCalls += 1;
+          await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+          return null;
+        }),
+        redisB.module.cachedFetchJson(KEY, 60, async () => {
+          fetcherCalls += 1;
+          return { value: 'should-not-run' };
+        }),
+      ]);
+
+      assert.equal(fetcherCalls, 1, 'follower should observe the sentinel instead of hedging');
+      assert.equal(leader, null);
+      assert.equal(follower, null);
+    } finally {
+      redisA.cleanup();
+      redisB.cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('returns null after follower timeout when fallback=return_null', async () => {
+    const redis = await importRedisWithRegistry(coordinatorRegistry({ waitMs: 20, leaseMs: 80 }));
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const harness = createRedisCommandHarness();
+    const originalFetch = globalThis.fetch;
+    const lockKey = await deriveLockKeyForTest(KEY);
+    harness.setRaw(lockKey, 'other-owner');
+    globalThis.fetch = harness.fetch;
+
+    try {
+      let fetcherCalls = 0;
+      const result = await redis.module.cachedFetchJson(KEY, 60, async () => {
+        fetcherCalls += 1;
+        return { value: 'should-not-run' };
+      });
+
+      assert.equal(fetcherCalls, 0, 'return_null timeout should not call the fetcher');
+      assert.equal(result, null);
+    } finally {
+      redis.cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('retries lock acquisition before hedging', async () => {
+    const redis = await importRedisWithRegistry(coordinatorRegistry({
+      waitMs: 20,
+      leaseMs: 80,
+      fallback: 'hedge',
+    }));
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const harness = createRedisCommandHarness();
+    const originalFetch = globalThis.fetch;
+    const lockKey = await deriveLockKeyForTest(KEY);
+    harness.setRaw(lockKey, 'other-owner');
+    globalThis.fetch = harness.fetch;
+
+    try {
+      let fetcherCalls = 0;
+      const result = await redis.module.cachedFetchJson(KEY, 60, async () => {
+        fetcherCalls += 1;
+        return { value: 'should-not-run' };
+      });
+
+      const lockAttempts = harness.commandLog.filter((entry) => entry.verb === 'SET' && entry.key === lockKey).length;
+      assert.equal(fetcherCalls, 0, 'hedge must not bypass the second lock attempt');
+      assert.equal(lockAttempts, 2, 'hedge fallback should attempt the lock twice');
+      assert.equal(result, null);
+    } finally {
+      redis.cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('throws on invalid cache-fill timing invariants before coordination starts', async () => {
+    const redis = await importRedisWithRegistry(coordinatorRegistry({ waitMs: 50, leaseMs: 50 }));
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const harness = createRedisCommandHarness();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = harness.fetch;
+
+    try {
+      await assert.rejects(
+        () => redis.module.cachedFetchJson(KEY, 60, async () => ({ value: 'never' })),
+        /waitMs must be < leaseMs/,
+      );
+      const lockAttempts = harness.commandLog.filter((entry) => entry.verb === 'SET' && entry.key.startsWith('lock:fill:v1:')).length;
+      assert.equal(lockAttempts, 0, 'no lock commands should run after invariant failure');
+    } finally {
+      redis.cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('keeps the local inflight entry until publish finishes', async () => {
+    const redis = await importRedisFresh();
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const originalFetch = globalThis.fetch;
+
+    let fetcherCalls = 0;
+    globalThis.fetch = async (url, init = {}) => {
+      const raw = String(url);
+      const command = parseRedisCommand(url, init);
+      if (raw.includes('/get/')) {
+        return jsonResponse({ result: undefined });
+      }
+      if (command?.verb === 'SET') {
+        await new Promise((resolvePromise) => setTimeout(resolvePromise, 20));
+        return jsonResponse({ result: 'OK' });
+      }
+      throw new Error(`Unexpected fetch URL: ${raw}`);
+    };
+
+    try {
+      const first = redis.cachedFetchJson('unlisted:publish-order:v1', 60, async () => {
+        fetcherCalls += 1;
+        return { value: 'payload' };
+      });
+      await new Promise((resolvePromise) => setTimeout(resolvePromise, 5));
+      const second = redis.cachedFetchJson('unlisted:publish-order:v1', 60, async () => {
+        fetcherCalls += 1;
+        return { value: 'should-not-run' };
+      });
+
+      const [a, b] = await Promise.all([first, second]);
+      assert.equal(fetcherCalls, 1, 'late local callers should join until publish completes');
+      assert.deepEqual(a, { value: 'payload' });
+      assert.deepEqual(b, { value: 'payload' });
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('does not delete a lock that was replaced by another owner before release', async () => {
+    const redis = await importRedisWithRegistry(coordinatorRegistry());
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const harness = createRedisCommandHarness();
+    const originalFetch = globalThis.fetch;
+    const lockKey = await deriveLockKeyForTest(KEY);
+
+    globalThis.fetch = async (url, init = {}) => {
+      const command = parseRedisCommand(url, init);
+      const response = await harness.fetch(url, init);
+      if (command?.verb === 'SET' && command.key === KEY) {
+        harness.setRaw(lockKey, 'new-owner-token');
+      }
+      return response;
+    };
+
+    try {
+      const result = await redis.module.cachedFetchJson(KEY, 60, async () => ({ value: 'published' }));
+      assert.deepEqual(result, { value: 'published' });
+      assert.equal(harness.store.get(lockKey), 'new-owner-token', 'safe unlock must preserve a newer owner lock');
+    } finally {
+      redis.cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('preserves legacy behavior when no cache-fill policy exists', async () => {
+    const redisA = await importRedisWithRegistry({});
+    const redisB = await importRedisWithRegistry({});
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const harness = createRedisCommandHarness();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = harness.fetch;
+
+    let fetcherCalls = 0;
+    try {
+      await Promise.all([
+        redisA.module.cachedFetchJson('unlisted:legacy:v1', 60, async () => {
+          fetcherCalls += 1;
+          await new Promise((resolvePromise) => setTimeout(resolvePromise, 15));
+          return { value: 'a' };
+        }),
+        redisB.module.cachedFetchJson('unlisted:legacy:v1', 60, async () => {
+          fetcherCalls += 1;
+          await new Promise((resolvePromise) => setTimeout(resolvePromise, 15));
+          return { value: 'b' };
+        }),
+      ]);
+
+      assert.equal(fetcherCalls, 2, 'unlisted keys should keep single-instance behavior only');
+    } finally {
+      redisA.cleanup();
+      redisB.cleanup();
       globalThis.fetch = originalFetch;
       restoreEnv();
     }

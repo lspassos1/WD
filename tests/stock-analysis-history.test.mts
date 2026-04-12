@@ -55,6 +55,36 @@ const mockNewsXml = `<?xml version="1.0" encoding="UTF-8"?>
   </channel>
 </rss>`;
 
+function parseRedisCommand(url: string, init?: RequestInit) {
+  const parsed = new URL(url);
+  if (parsed.pathname.startsWith('/get/')) {
+    return {
+      verb: 'GET',
+      key: decodeURIComponent(parsed.pathname.slice('/get/'.length)),
+      args: [] as string[],
+    };
+  }
+  if (parsed.pathname.startsWith('/set/')) {
+    const parts = parsed.pathname.split('/');
+    return {
+      verb: 'SET',
+      key: decodeURIComponent(parts[2] || ''),
+      args: [decodeURIComponent(parts[3] || ''), ...parts.slice(4)],
+    };
+  }
+  if ((parsed.pathname === '/' || parsed.pathname === '') && typeof init?.body === 'string') {
+    const command = JSON.parse(init.body) as unknown;
+    if (Array.isArray(command) && command.length > 0) {
+      return {
+        verb: String(command[0] || '').toUpperCase(),
+        key: typeof command[1] === 'string' ? command[1] : '',
+        args: command.slice(2).map((value) => String(value)),
+      };
+    }
+  }
+  return null;
+}
+
 function createRedisAwareFetch() {
   const redis = new Map<string, string>();
   const sortedSets = new Map<string, Array<{ member: string; score: number }>>();
@@ -77,18 +107,18 @@ function createRedisAwareFetch() {
     }
 
     if (url.startsWith(process.env.UPSTASH_REDIS_REST_URL || '')) {
-      const parsed = new URL(url);
-      if (parsed.pathname.startsWith('/get/')) {
-        const key = decodeURIComponent(parsed.pathname.slice('/get/'.length));
+      const command = parseRedisCommand(url, init);
+      if (command?.verb === 'GET') {
+        const key = command.key;
         return new Response(JSON.stringify({ result: redis.get(key) ?? null }), { status: 200 });
       }
-      if (parsed.pathname.startsWith('/set/')) {
-        const parts = parsed.pathname.split('/');
-        const key = decodeURIComponent(parts[2] || '');
-        const value = decodeURIComponent(parts[3] || '');
+      if (command?.verb === 'SET') {
+        const key = command.key;
+        const value = command.args[0] || '';
         redis.set(key, value);
         return new Response(JSON.stringify({ result: 'OK' }), { status: 200 });
       }
+      const parsed = new URL(url);
       if (parsed.pathname === '/pipeline') {
         const commands = JSON.parse(typeof init?.body === 'string' ? init.body : '[]') as string[][];
         const result = commands.map((command) => {

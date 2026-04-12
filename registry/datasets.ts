@@ -11,7 +11,14 @@ export interface DatasetContract {
   redis: { key: string; versionTag?: `v${number}`; payload: 'json'; };
   bootstrap?: { alias: string; tier: BootstrapTier; public: boolean; redisReadMode: 'unprefixed'; };
   health?: { bucket: HealthBucket; seedMetaKey?: string; maxStaleMin?: number; onDemand?: boolean; emptyOk?: boolean; cascadeGroup?: string; };
-  cacheFill?: { enabled: boolean; leaseMs?: number; waitMs?: number; fallback?: CacheFillFallback; };
+  cacheFill?: {
+    enabled: boolean;
+    leaseMs?: number;
+    waitMs?: number;
+    pollMinMs?: number;
+    pollMaxMs?: number;
+    fallback?: CacheFillFallback;
+  };
 }
 
 const BOOTSTRAP_ALIASES = {

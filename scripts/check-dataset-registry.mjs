@@ -4,7 +4,7 @@ execSync('npx tsx scripts/generate-dataset-registry.ts', { stdio: 'inherit' });
 
 try {
   execSync(
-    'git diff --exit-code -- api/_generated/dataset-registry.js api/_generated/health-registry.js server/_shared/_generated/bootstrap-registry.ts',
+    'git diff --exit-code -- api/_generated/dataset-registry.js api/_generated/health-registry.js server/_shared/_generated/bootstrap-registry.ts server/_shared/_generated/cache-fill-registry.ts',
     { stdio: 'inherit' },
   );
 } catch {
