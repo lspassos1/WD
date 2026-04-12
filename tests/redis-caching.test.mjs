@@ -1130,8 +1130,8 @@ describe('distributed cache-fill coordinator', { concurrency: 1 }, () => {
     return {
       [KEY]: {
         logicalName: 'riskScoresLive',
-        leaseMs: 120,
-        waitMs: 40,
+        leaseMs: 200,
+        waitMs: 100,
         pollMinMs: 5,
         pollMaxMs: 10,
         fallback: 'return_null',
@@ -1454,6 +1454,78 @@ describe('distributed cache-fill coordinator', { concurrency: 1 }, () => {
     } finally {
       redisA.cleanup();
       redisB.cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+});
+
+describe('coordinator-enabled handler fallbacks', { concurrency: 1 }, () => {
+  it('list-service-statuses falls back to the module cache after coordinator timeout', async () => {
+    const { module, cleanup } = await importPatchedTsModule(
+      'server/worldmonitor/infrastructure/v1/list-service-statuses.ts',
+      {},
+    );
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const harness = createRedisCommandHarness();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = harness.fetch;
+
+    const statuses = [
+      { name: 'Example Service', status: 'SERVICE_OPERATIONAL_STATUS_OPERATIONAL' },
+    ];
+
+    try {
+      harness.setRaw('infra:service-statuses:v1', JSON.stringify(statuses));
+      const warm = await module.listServiceStatuses({}, {});
+      assert.deepEqual(warm.statuses, statuses, 'warm path should seed the module fallback cache');
+
+      harness.store.delete('infra:service-statuses:v1');
+      harness.setRaw(await deriveLockKeyForTest('infra:service-statuses:v1'), 'other-owner');
+
+      const fallback = await module.listServiceStatuses({}, {});
+      assert.deepEqual(fallback.statuses, statuses, 'timeout/null path should return the in-memory fallback cache');
+    } finally {
+      cleanup();
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
+
+  it('get-risk-scores falls back to stale data after coordinator timeout', async () => {
+    const { module, cleanup } = await importPatchedTsModule(
+      'server/worldmonitor/intelligence/v1/get-risk-scores.ts',
+      {},
+    );
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      VERCEL_ENV: undefined,
+      VERCEL_GIT_COMMIT_SHA: undefined,
+    });
+    const harness = createRedisCommandHarness();
+    const originalFetch = globalThis.fetch;
+    globalThis.fetch = harness.fetch;
+
+    const seeded = { ciiScores: [], strategicRisks: [] };
+
+    try {
+      harness.setRaw('risk:scores:sebuf:v1', JSON.stringify(seeded));
+      const warm = await module.getRiskScores({}, {});
+      assert.deepEqual(warm, seeded, 'warm path should populate stale fallback data');
+
+      harness.store.delete('risk:scores:sebuf:v1');
+      harness.setRaw(await deriveLockKeyForTest('risk:scores:sebuf:v1'), 'other-owner');
+
+      const fallback = await module.getRiskScores({}, {});
+      assert.deepEqual(fallback, seeded, 'timeout/null path should return the stale cache entry');
+    } finally {
+      cleanup();
       globalThis.fetch = originalFetch;
       restoreEnv();
     }

@@ -554,6 +554,25 @@ const HEALTH_CASCADE_GROUPS = {
   militaryFlightsStale: ['militaryFlights', 'militaryFlightsStale'],
 } as const;
 
+const CACHE_FILL_POLICIES = {
+  serviceStatuses: {
+    enabled: true,
+    leaseMs: 12_000,
+    waitMs: 3_000,
+    pollMinMs: 75,
+    pollMaxMs: 175,
+    fallback: 'return_null',
+  },
+  riskScoresLive: {
+    enabled: true,
+    leaseMs: 15_000,
+    waitMs: 4_000,
+    pollMinMs: 100,
+    pollMaxMs: 250,
+    fallback: 'return_null',
+  },
+} as const satisfies Record<string, NonNullable<DatasetContract['cacheFill']>>;
+
 const BOOTSTRAP_TO_HEALTH_NAME = {
   insights: 'newsInsights',
   predictions: 'predictionMarkets',
@@ -662,6 +681,13 @@ function buildDatasets(): DatasetContract[] {
       if (dataset?.health) {
         dataset.health.cascadeGroup = groupName;
       }
+    }
+  }
+
+  for (const [logicalName, cacheFill] of Object.entries(CACHE_FILL_POLICIES)) {
+    const dataset = datasets.get(logicalName);
+    if (dataset) {
+      dataset.cacheFill = { ...cacheFill };
     }
   }
 

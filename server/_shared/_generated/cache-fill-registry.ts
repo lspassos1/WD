@@ -8,4 +8,7 @@ export interface CacheFillRegistryEntry {
   pollMaxMs: number;
   fallback: CacheFillFallback;
 }
-export const CACHE_FILL_REGISTRY: Record<string, CacheFillRegistryEntry> = {};
+export const CACHE_FILL_REGISTRY: Record<string, CacheFillRegistryEntry> = {
+  "infra:service-statuses:v1": { logicalName: "serviceStatuses", leaseMs: 12000, waitMs: 3000, pollMinMs: 75, pollMaxMs: 175, fallback: "return_null" },
+  "risk:scores:sebuf:v1": { logicalName: "riskScoresLive", leaseMs: 15000, waitMs: 4000, pollMinMs: 100, pollMaxMs: 250, fallback: "return_null" },
+};

@@ -8,6 +8,7 @@ The fork now uses `registry/datasets.ts` as the single authored source of truth 
 2. Run `npm run registry:generate`.
 3. Commit the source file plus all generated runtime artifacts:
    - `server/_shared/_generated/bootstrap-registry.ts`
+   - `server/_shared/_generated/cache-fill-registry.ts`
    - `api/_generated/dataset-registry.js`
    - `api/_generated/health-registry.js`
 4. Do not hand-edit generated files. CI treats drift as a build-breaking defect.
@@ -22,6 +23,7 @@ Run these checks locally before opening a PR:
 - `node --test tests/customs-revenue.test.mjs`
 - `node --test tests/resilience-static-seed.test.mjs`
 - `node --test tests/edge-functions.test.mjs`
+- `node --test tests/redis-caching.test.mjs`
 - `npm run test:data`
 - `npm run typecheck`
 - `npm run typecheck:api`
@@ -36,6 +38,8 @@ Run these checks locally before opening a PR:
   Edge-safe health bootstrap keys, standalone keys, seed metadata, on-demand keys, empty-ok keys, and cascade groups.
 - `server/_shared/_generated/bootstrap-registry.ts`
   Server-safe canonical bootstrap registry export.
+- `server/_shared/_generated/cache-fill-registry.ts`
+  Server-safe allowlist of enabled cache-fill coordinator policies keyed by canonical Redis key.
 
 ## Contribution path
 
@@ -55,3 +59,13 @@ Current stacked sequence in the fork:
 - `#11` `refactor(health): load generated health registry in fork`
 - `#12` `ci(registry): enforce generated registry freshness in fork`
 - `#13` `docs(registry): document the full dataset workflow`
+
+## Phase 2 follow-up
+
+The registry now also projects cache-fill policy for the server runtime. The distributed coordinator rollout is tracked separately so phase 1 stays compile-time/test-time focused and phase 2 stays runtime-focused.
+
+- Tracking issue: `#14` `Architecture: distributed cache-fill coordinator rollout in fork`
+- Foundation slice: `#15` `C1: cache-fill coordinator foundation in fork`
+- First rollout slice: `#16` `C2: enable coordinator for service statuses and risk scores`
+- Measurement slice: `#17` `C3: measure and tune cache-fill coordinator outcomes`
+- Follow-up lock migration: `#18` `C4: migrate temporal anomalies off ad hoc Redis lock`
