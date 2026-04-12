@@ -384,6 +384,38 @@ describe('redis caching behavior', { concurrency: 1 }, () => {
       restoreEnv();
     }
   });
+
+  it('prefixes EVAL pipeline keys from numkeys instead of the script slot', async () => {
+    const redis = await importRedisFresh();
+    const restoreEnv = withEnv({
+      UPSTASH_REDIS_REST_URL: 'https://redis.test',
+      UPSTASH_REDIS_REST_TOKEN: 'token',
+      VERCEL_ENV: 'preview',
+      VERCEL_GIT_COMMIT_SHA: 'abcdef1234567890',
+    });
+    const originalFetch = globalThis.fetch;
+    const script = "return redis.call('GET', KEYS[1])";
+
+    globalThis.fetch = async (url, init = {}) => {
+      assert.equal(String(url), 'https://redis.test/pipeline');
+      assert.deepEqual(JSON.parse(String(init.body)), [[
+        'EVAL',
+        script,
+        1,
+        'preview:abcdef12:lock:test:key',
+        'token',
+      ]]);
+      return jsonResponse([{ result: 'OK' }]);
+    };
+
+    try {
+      const response = await redis.runRedisPipeline([['EVAL', script, 1, 'lock:test:key', 'token']]);
+      assert.deepEqual(response, [{ result: 'OK' }]);
+    } finally {
+      globalThis.fetch = originalFetch;
+      restoreEnv();
+    }
+  });
 });
 
 describe('cachedFetchJsonWithMeta source labeling', { concurrency: 1 }, () => {

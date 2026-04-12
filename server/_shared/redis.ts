@@ -103,7 +103,16 @@ function normalizeRedisCommand(
   const normalized = [...command];
   if (raw) return normalized;
 
-  for (const index of prefixKeyIndexes) {
+  const verb = typeof normalized[0] === 'string' ? normalized[0].toUpperCase() : '';
+  const effectiveKeyIndexes = (verb === 'EVAL' || verb === 'EVALSHA')
+    ? (() => {
+        const numKeys = Number(normalized[2] ?? 0);
+        if (!Number.isInteger(numKeys) || numKeys <= 0) return [];
+        return Array.from({ length: numKeys }, (_, offset) => offset + 3);
+      })()
+    : prefixKeyIndexes;
+
+  for (const index of effectiveKeyIndexes) {
     const value = normalized[index];
     if (typeof value === 'string') {
       normalized[index] = prefixKey(value);
