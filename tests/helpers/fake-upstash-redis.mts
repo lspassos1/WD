@@ -10,6 +10,55 @@ export interface FakeRedisState {
   expires: Map<string, number>;
 }
 
+export interface ParsedRedisCommand {
+  verb: string;
+  key: string;
+  args: Array<string | number>;
+}
+
+export function parseRedisCommand(input: RequestInfo | URL, init?: RequestInit): ParsedRedisCommand | null {
+  const url = typeof input === 'string' ? input : input instanceof URL ? input.toString() : input.url;
+  const parsed = new URL(url);
+
+  if (parsed.pathname.startsWith('/get/')) {
+    return {
+      verb: 'GET',
+      key: decodeURIComponent(parsed.pathname.slice('/get/'.length)),
+      args: [],
+    };
+  }
+
+  if (parsed.pathname.startsWith('/set/')) {
+    const parts = parsed.pathname.split('/');
+    return {
+      verb: 'SET',
+      key: decodeURIComponent(parts[2] || ''),
+      args: [decodeURIComponent(parts[3] || ''), ...parts.slice(4)],
+    };
+  }
+
+  if ((parsed.pathname === '/' || parsed.pathname === '') && typeof init?.body === 'string') {
+    const command = JSON.parse(init.body) as unknown;
+    if (Array.isArray(command) && command.length > 0) {
+      const verb = String(command[0] ?? '').toUpperCase();
+      if (verb === 'EVAL') {
+        return {
+          verb,
+          key: String(command[3] ?? ''),
+          args: command.slice(4).map((value) => typeof value === 'string' || typeof value === 'number' ? value : String(value)),
+        };
+      }
+      return {
+        verb,
+        key: typeof command[1] === 'string' ? command[1] : '',
+        args: command.slice(2).map((value) => typeof value === 'string' || typeof value === 'number' ? value : String(value)),
+      };
+    }
+  }
+
+  return null;
+}
+
 export function createRedisFetch(fixtures: Record<string, unknown>): FakeRedisState {
   const redis = new Map<string, string>();
   const sortedSets = new Map<string, FakeRedisSortedSetEntry[]>();
@@ -137,16 +186,28 @@ export function createRedisFetch(fixtures: Record<string, unknown>): FakeRedisSt
     }
 
     const parsed = new URL(url);
-    if (parsed.pathname.startsWith('/get/')) {
-      const key = decodeURIComponent(parsed.pathname.slice('/get/'.length));
-      return new Response(JSON.stringify({ result: readString(key) }), { status: 200 });
+    const command = parseRedisCommand(url, init);
+    if (command?.verb === 'GET') {
+      return new Response(JSON.stringify({ result: readString(command.key) }), { status: 200 });
     }
 
-    if (parsed.pathname.startsWith('/set/')) {
-      const parts = parsed.pathname.split('/');
-      const key = decodeURIComponent(parts[2] || '');
-      const value = decodeURIComponent(parts[3] || '');
-      return new Response(JSON.stringify(writeString(key, value, parts.slice(4))), { status: 200 });
+    if (command?.verb === 'SET') {
+      return new Response(
+        JSON.stringify(writeString(command.key, String(command.args[0] ?? ''), command.args.slice(1))),
+        { status: 200 },
+      );
+    }
+
+    if (command?.verb === 'DEL') {
+      return new Response(JSON.stringify(deleteKey(command.key)), { status: 200 });
+    }
+
+    if (command?.verb === 'EVAL') {
+      const token = String(command.args[0] ?? '');
+      if (readString(command.key) === token) {
+        return new Response(JSON.stringify(deleteKey(command.key)), { status: 200 });
+      }
+      return new Response(JSON.stringify({ result: 0 }), { status: 200 });
     }
 
     if (parsed.pathname === '/' || parsed.pathname === '') {

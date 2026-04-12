@@ -1,5 +1,5 @@
-import { CACHE_FILL_REGISTRY, type CacheFillRegistryEntry } from './_generated/cache-fill-registry.ts';
-import { sha256Hex } from './hash.ts';
+import { CACHE_FILL_REGISTRY, type CacheFillRegistryEntry } from './_generated/cache-fill-registry';
+import { sha256Hex } from './hash';
 
 const REDIS_OP_TIMEOUT_MS = 1_500;
 const REDIS_PIPELINE_TIMEOUT_MS = 5_000;
@@ -293,7 +293,7 @@ async function tryAcquireFillLock(
   policy: CacheFillRegistryEntry,
   key: string,
 ): Promise<boolean | null> {
-  const response = await runRedisCommand(['SET', lockKey, token, 'NX', 'PX', leaseMs]);
+  const response = await runRedisCommand(['SET', lockKey, token, 'NX', 'PX', leaseMs], { raw: true });
   if (!response) {
     logCacheFillEvent('cache_fill_lock_error', policy, key, { operation: 'acquire', lockKey });
     return null;
@@ -309,7 +309,8 @@ async function releaseFillLockIfOwner(
 ): Promise<void> {
   const script = "if redis.call('GET', KEYS[1]) == ARGV[1] then return redis.call('DEL', KEYS[1]) else return 0 end";
   const response = await runRedisCommand(['EVAL', script, 1, lockKey, token], {
-    prefixKeyIndexes: [3],
+    raw: true,
+    prefixKeyIndexes: [],
   });
   if (!response) {
     logCacheFillEvent('cache_fill_lock_error', policy, key, { operation: 'release', lockKey });
@@ -482,7 +483,7 @@ async function cachedFetchJsonInternal<T extends object>(
   const existing = inflight.get(key);
   if (existing) {
     const shared = await existing;
-    return { data: shared.data as T | null, source: 'fresh' };
+    return { data: shared.data as T | null, source: shared.source };
   }
 
   const promise = resolveCacheMiss(key, ttlSeconds, fetcher, negativeTtlSeconds, policy)
@@ -519,8 +520,9 @@ export async function cachedFetchJson<T extends object>(
  * (e.g. to set provider/cached metadata on responses).
  *
  * Returns { data, source } where source is:
- *   'cache'  — served from Redis
- *   'fresh'  — fetcher ran (leader) or joined an in-flight fetch (follower)
+ *   'cache'  — served from Redis, including coordinated rechecks/follower reads
+ *   'fresh'  — fetcher ran on the current instance
+ * In-flight joiners preserve the source observed by the shared miss resolution.
  */
 export async function cachedFetchJsonWithMeta<T extends object>(
   key: string,
@@ -602,12 +604,10 @@ export async function deleteRedisKey(key: string, raw = false): Promise<void> {
   if (!url || !token) return;
 
   try {
-    const finalKey = raw ? key : prefixKey(key);
-    await fetch(`${url}/del/${encodeURIComponent(finalKey)}`, {
-      method: 'POST',
-      headers: { Authorization: `Bearer ${token}` },
-      signal: AbortSignal.timeout(REDIS_OP_TIMEOUT_MS),
-    });
+    const response = await runRedisCommand(['DEL', key], { raw });
+    if (!response) {
+      console.warn('[redis] deleteRedisKey skipped: command did not complete');
+    }
   } catch (err) {
     console.warn('[redis] deleteRedisKey failed:', errMsg(err));
   }
