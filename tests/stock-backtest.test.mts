@@ -4,6 +4,7 @@ import { afterEach, describe, it } from 'node:test';
 import { backtestStock } from '../server/worldmonitor/market/v1/backtest-stock.ts';
 import { listStoredStockBacktests } from '../server/worldmonitor/market/v1/list-stored-stock-backtests.ts';
 import { MarketServiceClient } from '../src/generated/client/worldmonitor/market/v1/service_client.ts';
+import { parseRedisCommand } from './helpers/fake-upstash-redis.mts';
 
 const originalFetch = globalThis.fetch;
 const originalRedisUrl = process.env.UPSTASH_REDIS_REST_URL;
@@ -51,36 +52,6 @@ afterEach(() => {
   if (originalRedisToken == null) delete process.env.UPSTASH_REDIS_REST_TOKEN;
   else process.env.UPSTASH_REDIS_REST_TOKEN = originalRedisToken;
 });
-
-function parseRedisCommand(url: string, init?: RequestInit) {
-  const parsed = new URL(url);
-  if (parsed.pathname.startsWith('/get/')) {
-    return {
-      verb: 'GET',
-      key: decodeURIComponent(parsed.pathname.slice('/get/'.length)),
-      args: [] as string[],
-    };
-  }
-  if (parsed.pathname.startsWith('/set/')) {
-    const parts = parsed.pathname.split('/');
-    return {
-      verb: 'SET',
-      key: decodeURIComponent(parts[2] || ''),
-      args: [decodeURIComponent(parts[3] || ''), ...parts.slice(4)],
-    };
-  }
-  if ((parsed.pathname === '/' || parsed.pathname === '') && typeof init?.body === 'string') {
-    const command = JSON.parse(init.body) as unknown;
-    if (Array.isArray(command) && command.length > 0) {
-      return {
-        verb: String(command[0] || '').toUpperCase(),
-        key: typeof command[1] === 'string' ? command[1] : '',
-        args: command.slice(2).map((value) => String(value)),
-      };
-    }
-  }
-  return null;
-}
 
 function createRedisAwareBacktestFetch(mockChartPayload: unknown) {
   const redis = new Map<string, string>();

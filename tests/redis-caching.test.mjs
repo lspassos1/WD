@@ -8,8 +8,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const root = resolve(__dirname, '..');
 
-const REDIS_MODULE_URL = pathToFileURL(resolve(root, 'server/_shared/redis.ts')).href;
-
 function jsonResponse(payload, ok = true) {
   return {
     ok,
@@ -86,7 +84,8 @@ function withEnv(overrides) {
 }
 
 async function importRedisFresh() {
-  return import(`${REDIS_MODULE_URL}?t=${Date.now()}-${Math.random().toString(16).slice(2)}`);
+  const imported = await importPatchedTsModule('server/_shared/redis.ts', {});
+  return imported.module;
 }
 
 async function importPatchedTsModule(relPath, replacements) {
@@ -181,8 +180,8 @@ async function importRedisWithRegistry(entries) {
   writeFileSync(registryPath, buildCacheFillRegistryModule(entries));
 
   const imported = await importPatchedTsModule('server/_shared/redis.ts', {
-    './_generated/cache-fill-registry.ts': registryPath,
-    './hash.ts': resolve(root, 'server/_shared/hash.ts'),
+    './_generated/cache-fill-registry': registryPath,
+    './hash': resolve(root, 'server/_shared/hash.ts'),
   });
 
   return {
