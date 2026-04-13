@@ -557,8 +557,8 @@ const HEALTH_CASCADE_GROUPS = {
 const CACHE_FILL_POLICIES = {
   serviceStatuses: {
     enabled: true,
-    leaseMs: 12_000,
-    waitMs: 3_000,
+    leaseMs: 15_000,
+    waitMs: 11_000,
     pollMinMs: 75,
     pollMaxMs: 175,
     fallback: 'return_null',
