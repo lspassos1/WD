@@ -37,6 +37,9 @@ function validateDataset(d: DatasetContract): void {
     if (d.bootstrap.redisReadMode !== 'unprefixed') {
       fail(`Dataset ${d.id} has invalid bootstrap.redisReadMode`);
     }
+    if (d.bootstrap.tier !== 'fast' && d.bootstrap.tier !== 'slow') {
+      fail(`Dataset ${d.id} is bootstrap-enabled but missing a valid bootstrap tier`);
+    }
     if (!d.health) {
       fail(`Dataset ${d.id} is bootstrap-enabled but missing health contract`);
     }
