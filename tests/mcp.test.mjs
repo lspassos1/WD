@@ -118,12 +118,13 @@ describe('api/mcp.ts — PRO MCP Server', () => {
 
   // --- tools/list ---
 
-  it('tools/list returns 32 tools with name, description, inputSchema', async () => {
+  it('tools/list returns 33 tools with name, description, inputSchema', async () => {
     const res = await handler(makeReq('POST', { jsonrpc: '2.0', id: 2, method: 'tools/list', params: {} }));
     assert.equal(res.status, 200);
     const body = await res.json();
     assert.ok(Array.isArray(body.result?.tools), 'result.tools must be an array');
-    assert.equal(body.result.tools.length, 32, `Expected 32 tools, got ${body.result.tools.length}`);
+    assert.equal(body.result.tools.length, 33, `Expected 33 tools, got ${body.result.tools.length}`);
+    assert.ok(body.result.tools.some(tool => tool.name === 'get_country_resilience'), 'get_country_resilience must be registered');
     for (const tool of body.result.tools) {
       assert.ok(tool.name, 'tool.name must be present');
       assert.ok(tool.description, 'tool.description must be present');
@@ -159,6 +160,47 @@ describe('api/mcp.ts — PRO MCP Server', () => {
     assert.equal(data.stale, true, 'stale must be true when cache is empty');
     assert.equal(data.cached_at, null, 'cached_at must be null when no seed-meta');
     assert.ok('data' in data, 'data field must be present');
+  });
+
+  it('get_country_macro exposes IMF plus financial exposure seed slots', async () => {
+    const res = await handler(makeReq('POST', {
+      jsonrpc: '2.0', id: 24, method: 'tools/call',
+      params: { name: 'get_country_macro', arguments: {} },
+    }));
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    const data = JSON.parse(body.result.content[0].text);
+    assert.equal(data.stale, true, 'missing cache should mark bundled macro stale');
+    for (const expected of ['macro', 'growth', 'labor', 'external', 'wb-external-debt', 'bis-lbs', 'fatf-listing']) {
+      assert.ok(expected in data.data, `get_country_macro data must include ${expected}`);
+    }
+  });
+
+  it('get_country_resilience exposes resilience seed slots', async () => {
+    const res = await handler(makeReq('POST', {
+      jsonrpc: '2.0', id: 25, method: 'tools/call',
+      params: { name: 'get_country_resilience', arguments: {} },
+    }));
+    assert.equal(res.status, 200);
+    const body = await res.json();
+    const data = JSON.parse(body.result.content[0].text);
+    assert.equal(data.stale, true, 'missing cache should mark bundled resilience stale');
+    for (const expected of [
+      'ranking',
+      'index',
+      'fiscal-space',
+      'reserve-adequacy',
+      'external-debt',
+      'import-hhi',
+      'fuel-stocks',
+      'reexport-share',
+      'sovereign-wealth',
+      'low-carbon-generation',
+      'fossil-electricity-share',
+      'power-losses',
+    ]) {
+      assert.ok(expected in data.data, `get_country_resilience data must include ${expected}`);
+    }
   });
 
   it('evaluateFreshness marks bundled data stale when any required source meta is missing', () => {

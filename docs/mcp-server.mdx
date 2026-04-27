@@ -106,7 +106,7 @@ npx @modelcontextprotocol/inspector https://worldmonitor.app/mcp
 
 ## Tool catalog
 
-The server exposes 32 tools. Most are cache-reads over pre-seeded Redis keys (sub-second). Six (`get_world_brief`, `get_country_brief`, `analyze_situation`, `generate_forecasts`, `search_flights`, `search_flight_prices_by_date`) call live LLMs or external APIs and are slower.
+The server exposes 33 tools. Most are cache-reads over pre-seeded Redis keys (sub-second). Six (`get_world_brief`, `get_country_brief`, `analyze_situation`, `generate_forecasts`, `search_flights`, `search_flight_prices_by_date`) call live LLMs or external APIs and are slower.
 
 ### Markets & economy
 
@@ -114,7 +114,8 @@ The server exposes 32 tools. Most are cache-reads over pre-seeded Redis keys (su
 |------|-------------|
 | `get_market_data` | Equity quotes, commodity prices (incl. gold GC=F), crypto, FX, sector performance, ETF flows, Gulf markets. |
 | `get_economic_data` | Fed Funds, economic calendar, fuel prices, ECB FX, EU yield curve, earnings, COT, energy storage, BIS DSR + property prices. |
-| `get_country_macro` | IMF WEO bundle per country: inflation, current account, GDP/capita, unemployment, savings-investment gap (~210 countries). |
+| `get_country_macro` | IMF WEO bundle plus World Bank/BIS/FATF financial exposure: inflation, current account, GDP/capita, unemployment, savings-investment gap, external debt, banking exposure, AML/CFT listing risk. |
+| `get_country_resilience` | Country resilience ranking, static inputs, recovery-capacity seeds, and energy-system resilience seeds. |
 | `get_eu_housing_cycle` | Eurostat annual house price index (prc_hpi_a), 10-yr sparkline per EU member + EA20/EU27. |
 | `get_eu_quarterly_gov_debt` | Eurostat quarterly gross government debt (%GDP), 8-quarter sparkline. |
 | `get_eu_industrial_production` | Eurostat monthly industrial production index, 12-month sparkline. |
