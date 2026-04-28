@@ -240,9 +240,9 @@ The pinned sebuf version is set by `SEBUF_VERSION` in the `Makefile` (currently 
 
 `make generate` writes generated files under `src/generated/` and `docs/api/`. These files remain committed to the repository, but they should never be edited by hand.
 
-For pull requests created from branches in this repository, CI runs `make generate` and automatically pushes a `chore(proto): update generated artifacts` commit when generated files drift.
+For pull requests created from branches in this repository, CI runs `make generate` on the PR branch and automatically pushes a `chore(proto): update generated artifacts` commit when generated files drift. A follow-up CI job then checks the pull request merge result so generated files cannot be stale relative to the current base branch.
 
-For pull requests created from forks, CI cannot safely push back to the contributor branch. In that case, run `make generate` locally and commit any changes under `src/generated/` and `docs/api/` yourself before requesting review.
+For pull requests created from forks, CI does not execute the fork's `Makefile`, `buf.gen.yaml`, or code generator configuration. In that case, run `make generate` locally and commit any changes under `src/generated/` and `docs/api/` yourself before requesting review. Maintainers can run the full freshness check from an internal branch when needed.
 
 ### OpenAPI Output
 
