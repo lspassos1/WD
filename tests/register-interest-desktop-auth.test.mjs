@@ -31,6 +31,7 @@ let registerInterest;
 let createDesktopAuthSignature;
 let timestampHeader;
 let signatureHeader;
+let desktopAuthWindowMs;
 
 describe('LeadsService.registerInterest desktop auth', () => {
   beforeEach(async () => {
@@ -44,6 +45,7 @@ describe('LeadsService.registerInterest desktop auth', () => {
     createDesktopAuthSignature = mod.createDesktopAuthSignature;
     timestampHeader = mod.DESKTOP_AUTH_TIMESTAMP_HEADER;
     signatureHeader = mod.DESKTOP_AUTH_SIGNATURE_HEADER;
+    desktopAuthWindowMs = mod.DESKTOP_AUTH_WINDOW_MS;
     const gen = await import('../src/generated/server/worldmonitor/leads/v1/service_server.ts');
     ApiError = gen.ApiError;
   });
@@ -64,7 +66,7 @@ describe('LeadsService.registerInterest desktop auth', () => {
 
   it('rejects stale desktop signatures', async () => {
     const req = desktopReq();
-    const timestamp = String(Date.now() - (6 * 60 * 1000));
+    const timestamp = String(Date.now() - desktopAuthWindowMs - 1_000);
     const signature = await createDesktopAuthSignature(process.env.WM_DESKTOP_SHARED_SECRET, timestamp, req);
 
     await assert.rejects(
