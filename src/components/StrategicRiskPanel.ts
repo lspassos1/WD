@@ -84,7 +84,9 @@ export class StrategicRiskPanel extends Panel {
   private lastRiskFingerprint = '';
 
   public async refresh(): Promise<boolean> {
-    await this.refreshHealthFreshness();
+    void this.refreshHealthFreshness().catch((error) => {
+      console.debug('[StrategicRiskPanel] Health freshness fetch failed (non-fatal)', error);
+    });
     this.freshnessSummary = dataFreshness.getSummary();
     this.convergenceAlerts = detectConvergence();
 
@@ -142,7 +144,10 @@ export class StrategicRiskPanel extends Panel {
     }
 
     const badgeDetail = this.freshnessSummary
-      ? `${this.freshnessSummary.activeSources}/${this.freshnessSummary.totalSources} sources`
+      ? t('components.strategicRisk.sourcesDetail', {
+        active: this.freshnessSummary.activeSources,
+        total: this.freshnessSummary.totalSources,
+      })
       : undefined;
     if (!this.freshnessSummary || this.freshnessSummary.activeSources === 0) {
       this.setDataBadge('unavailable');
