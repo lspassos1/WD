@@ -138,11 +138,9 @@ describe('empty-stack network/timeout errors are NOT suppressed', () => {
   // deploy, which the chunk-reload guard already auto-recovers. See the dedicated
   // suite below for that case (WORLDMONITOR-Q / WORLDMONITOR-15).
   const networkErrors = [
-    'TypeError: Failed to fetch',
     'TypeError: NetworkError when attempting to fetch resource.',
     'Could not connect to the server',
     'Operation timed out',
-    'signal timed out',
     'Invalid or unexpected token',
   ];
 
@@ -235,15 +233,65 @@ describe('dynamic-module-import failures (stale chunk after deploy)', () => {
   }
 });
 
+// ─── Zero-frame async-rejection patterns: AbortSignal timeouts + DOMException(NotSupportedError) ───
+//
+// AbortSignal.timeout() rejections and DOMException(NotSupportedError) bubble
+// up via onunhandledrejection without first-party frames captured (browser
+// fires them from internal infra at the timer boundary). Both phrases are
+// runtime-emitted only — our shipped code cannot synthesize them
+// (WORLDMONITOR-66 / WORLDMONITOR-62).
+
+describe('zero-frame async-rejection patterns (timeout / DOMException / OOM / DOM-walker / wrapper-injected timeout)', () => {
+  const zeroFrameErrors = [
+    ['signal timed out', 'TimeoutError'],
+    ['NotSupportedError: The operation is not supported.', 'Error'],
+    // Firefox setInterval mechanism, no captured frames (WORLDMONITOR-KE)
+    ['out of memory', 'Error'],
+    // Apple Mail privacy proxy DOM walker (WORLDMONITOR-P2). Frames in
+    // production are [sentry-chunk, [native code]] which fully filter out
+    // of `nonInfraFrames` so empty-stack semantics apply.
+    [".toLowerCase is not a function. (In 'el.className.toLowerCase()', 'el.className.toLowerCase' is undefined)", 'TypeError'],
+    ['.trim is not a function', 'TypeError'],
+    ['.indexOf is not a function', 'TypeError'],
+    ['.findIndex is not a function', 'TypeError'],
+    // Third-party Electron wrapper polling endpoints we don't serve
+    // (WORLDMONITOR-PW: /api/setIsSelect from Electron 39.2.7).
+    ['Request timeout: /api/setIsSelect', 'Error'],
+    ['Error: Request timeout: /api/whatever', 'Error'],
+    // Bare `Failed to fetch` with zero frames = service worker /
+    // extension / in-app webview / stale pre-deploy bundle. First-party
+    // fetch failures surface with a source-mapped frame on the awaiting
+    // site (WORLDMONITOR-KM 10ev/8u). The host-suffixed variant
+    // `Failed to fetch (<host>)` has its own first-party allowlist
+    // earlier in beforeSend (isMaplibreAjaxFailure), so doesn't go
+    // through this gate.
+    ['Failed to fetch', 'TypeError'],
+    ['TypeError: Failed to fetch', 'TypeError'],
+  ];
+
+  for (const [msg, type] of zeroFrameErrors) {
+    it(`suppresses "${msg.slice(0, 60)}..." with empty stack`, () => {
+      const event = makeEvent(msg, type, []);
+      assert.equal(beforeSend(event), null, `"${msg}" with empty stack should be suppressed`);
+    });
+
+    it(`suppresses "${msg.slice(0, 60)}..." with confirmed third-party stack`, () => {
+      const event = makeEvent(msg, type, [extensionFrame()]);
+      assert.equal(beforeSend(event), null);
+    });
+
+    it(`lets through "${msg.slice(0, 60)}..." with first-party stack`, () => {
+      const event = makeEvent(msg, type, [firstPartyFrame()]);
+      assert.ok(beforeSend(event) !== null, `"${msg}" with first-party stack should NOT be suppressed`);
+    });
+  }
+});
+
 // ─── All ambiguous errors require confirmed third-party stack ────────────
 
 describe('ambiguous runtime errors', () => {
   const ambiguousErrors = [
-    '.trim is not a function',
-    'e.toLowerCase is not a function',
-    '.indexOf is not a function',
     'Maximum call stack size exceeded',
-    'out of memory',
     'Cannot add property x, object is not extensible',
     'TypeError: Internal error',
     'Key not found',

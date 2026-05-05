@@ -76,9 +76,17 @@ Sentry.init({
     /NS_ERROR_ABORT/,
     /NS_ERROR_OUT_OF_MEMORY/,
     /NS_ERROR_UNEXPECTED/, // Firefox XPCOM: Worker init failure on privacy-hardened Firefox/Ubuntu — WORLDMONITOR-N6/N7/N8/N9
+    /NS_ERROR_FILE_NO_DEVICE_SPACE/, // Firefox XPCOM: disk-full on IndexedDB/cache/SW write — WORLDMONITOR-Q0
     /DataCloneError.*could not be cloned/,
     /cannot decode message/,
     /WKWebView was deallocated/,
+    // WKWebView host-app JS bridge timeout — Apple WebKit emits this exact phrase
+    // when a JS-to-native `postMessage` (e.g. WKScriptMessageHandler) gets no
+    // reply within the host's expected window. Common in in-app browsers like
+    // DuckDuckGo / Yelp / Reddit-mobile / Instagram. We never postMessage to a
+    // WKScriptMessageHandler ourselves; this is browser-native and unactionable
+    // (WORLDMONITOR-KJ — 15 events / 14 users in DuckDuckGo 26.3 on macOS).
+    /WKWebView API client did not respond to this postMessage/,
     /Unexpected end of(?: JSON)? input/,
     /window\.android\.\w+ is not a function/,
     /Attempted to assign to readonly property/,
@@ -194,7 +202,7 @@ Sentry.init({
     /Can't find variable: caches/,
     /crypto\.randomUUID is not a function/,
     /ucapi is not defined/,
-    /Identifier '(?:script|reportPage|element|Shop)' has already been declared/,
+    /Identifier '(?:script|reportPage|element|Shop|change_ua)' has already been declared/, // change_ua: User-Agent-changer browser extension injecting same script twice — WORLDMONITOR-2D (88 events / 26 users)
     /getAttribute is not a function.*getAttribute\("role"\)/,
     /SCDynimacBridge/,
     /errTimes is not defined/,
@@ -255,11 +263,13 @@ Sentry.init({
     /\.at is not a function/, // Instagram/older Android in-app browsers missing Array.at()
     /Response cannot have a body with the given status/, // Safari: Response constructor with 204/304 + body
     /ClerkJS: Network error/, // Clerk SDK transient network failures on user devices
+    /^ClerkJS: Response: needs_(?:first|second)_factor\b/, // Clerk SDK auth-flow branch not yet supported; SDK-internal limitation, not our code — WORLDMONITOR-Q1. Narrow to the observed `needs_*_factor` family so future actionable `ClerkJS: Response: <something>` errors (e.g. misconfigured redirect URI) still surface.
     /doesn't provide an export named/, // stale cached chunk after deploy references removed export
     /Possible side-effect in debug-evaluate/, // Chrome DevTools internal EvalError
     /ConvexError: CONFLICT/, // Expected OCC rejection on concurrent preference saves
     /ConvexError: API_ACCESS_REQUIRED/, // Expected business error: free user opens API Keys tab; client handles gracefully (UnifiedSettings.ts:731-738) — WORLDMONITOR-NA
     /\[CONVEX [AQM]\(.+?\)\] Connection lost while action was in flight/, // Convex SDK transient WS disconnect
+    /^Invalid start version: \d+:\d+:\d+, transitioning from \d+:\d+:\d+$/, // Convex SDK internal sync protocol error from `remote_query_set.js` (server republished query mid-transition or WS reconnect race) — WORLDMONITOR-Q5
     /Response did not contain `success` or `data`/, // DuckDuckGo browser internal tracker/content-block response — never emitted by our code
     /Cannot set properties of undefined \(setting 'bodyTouched'\)/, // Quark browser (Alibaba mobile) touch-tracking script injection (WORLDMONITOR-N1)
     /Cannot read properties of \w+ \(reading '[^']*[^\x00-\x7F][^']*'\)/, // Non-ASCII property name in message = mojibake/corrupted identifier from injected extension; our bundle emits ASCII-only identifiers (WORLDMONITOR-NS)
@@ -459,24 +469,64 @@ Sentry.init({
       !hasFirstParty
       && /(?:Failed to fetch|error loading) dynamically imported module|Importing a module script failed/i.test(msg)
     ) return null;
+    // Zero-frame async-rejection patterns: AbortSignal.timeout() rejections
+    // and DOMException(NotSupportedError) bubble up via
+    // onunhandledrejection without any first-party frames captured (the
+    // browser fires them from internal infra at the timer boundary). Both
+    // phrases are runtime-emitted only — our shipped code cannot synthesize
+    // the literal "signal timed out" or DOMException name. Same `!hasFirstParty`
+    // safety as the dynamic-import block (WORLDMONITOR-66 / WORLDMONITOR-62).
+    //
+    // Extensions to the same gate:
+    //   • `out of memory` — Firefox via setInterval mechanism, zero frames
+    //     (WORLDMONITOR-KE). Browser-engine signal, not synthesizable by
+    //     our code.
+    //   • `\.(toLowerCase|trim|indexOf|findIndex) is not a function` —
+    //     Apple Mail privacy proxy walks DOM with forEach and assumes
+    //     `el.className` is a string, but on SVG elements it's a
+    //     `SVGAnimatedString` (WORLDMONITOR-P2). Frame stack is
+    //     [sentry-chunk, [native code]] which gets fully filtered out of
+    //     `nonInfraFrames` → hasAnyStack=false. The literal " is not a
+    //     function" suffix anchored to those four mutator names is
+    //     unambiguously a third-party prototype-mismatch (our code never
+    //     calls those methods on objects of unknown shape).
+    //   • `Request timeout: /...` — third-party Electron wrappers
+    //     (WORLDMONITOR-PW: Electron 39.2.7 polling /api/setIsSelect, an
+    //     endpoint we don't serve). Our own `Request timeout` strings
+    //     don't include a colon-and-path suffix; the format is unique to
+    //     wrapper-injected code.
+    if (
+      !hasFirstParty
+      && (
+        /signal timed out/.test(msg)
+        || /NotSupportedError/.test(msg)
+        || /out of memory/i.test(msg)
+        || /\.(?:toLowerCase|trim|indexOf|findIndex) is not a function/.test(msg)
+        || /^(?:Error: )?Request timeout: \//.test(msg)
+        // `^Failed to fetch$` (no host suffix) with zero captured frames =
+        // background fetch from a service worker / browser extension /
+        // in-app webview / stale pre-deploy bundle. A first-party fetch
+        // failing in our shipped code surfaces with at least one
+        // source-mapped .ts frame on the rejection (the awaiting site).
+        // The hostname-suffixed variant `Failed to fetch (<host>)` is
+        // handled above by `isMaplibreAjaxFailure` which does its own
+        // first-party-host allowlist (WORLDMONITOR-KM).
+        || /^(?:TypeError: )?Failed to fetch$/.test(msg)
+      )
+    ) return null;
     if (hasAnyStack && !hasFirstParty && (
-      /\.(?:toLowerCase|trim|indexOf|findIndex) is not a function/.test(msg)
-      || /Maximum call stack size exceeded/.test(msg)
-      || /out of memory/i.test(msg)
+      /Maximum call stack size exceeded/.test(msg)
       || /^\w{1,2} is not a (?:function|constructor)/.test(msg)
       || /Cannot add property \w+, object is not extensible/.test(msg)
       || /^TypeError: Internal error$/.test(msg)
-      || /NotSupportedError/.test(msg)
       || /^Key not found$/.test(msg)
       || /^Element not found$/.test(msg)
-      || /^(?:TypeError: )?Failed to fetch$/.test(msg)
       || /^TypeError: NetworkError/.test(msg)
       || /Could not connect to the server/.test(msg)
       || (excType === 'SyntaxError' && /^Unexpected (?:token|keyword)/.test(msg))
       || /^SyntaxError: Unexpected (?:token|keyword)/.test(msg)
       || /Invalid or unexpected token/.test(msg)
       || /^Operation timed out/.test(msg)
-      || /signal timed out/.test(msg)
       || /Cannot inject key into script value/.test(msg)
       || /Connection lost while action was in flight/.test(msg)
       || /WEBGLRenderPipeline.*Link error/.test(msg)
@@ -566,6 +616,14 @@ function shouldSuppressCspViolation(
   if (/securly\.com|goguardian\.com|contentkeeper\.com/.test(blockedURI)) return true;
   // Vercel Analytics script.
   if (/_vercel\/insights\/script\.js/.test(blockedURI)) return true;
+  // Third-party stylesheet injection from public CDNs (browser extensions,
+  // bookmarklets, "inspect element" UI tools loading antd/bootstrap/etc.).
+  // We legitimately load JSON + JS from `cdn.jsdelivr.net` (world-atlas /
+  // us-atlas TopoJSON, chart.js in widget-sanitizer iframe), but never
+  // CSS — so a `style-src*` block on jsDelivr is by definition third-party
+  // injection (WORLDMONITOR-J0 — antd@4 CSS injection, 270 events / 26
+  // users on finance.worldmonitor.app).
+  if (/^style-src(-elem)?$/.test(directive) && /^https:\/\/cdn\.jsdelivr\.net\//.test(blockedURI)) return true;
   // Inline script blocks from extensions/in-app browsers.
   if (blockedURI === 'inline' && directive === 'script-src-elem') return true;
   // Null blocked URI from in-app browsers.
@@ -636,6 +694,7 @@ import { applyStoredTheme } from '@/utils/theme-manager';
 import { applyFont } from '@/services/font-settings';
 import { SITE_VARIANT } from '@/config/variant';
 import { clearChunkReloadGuard, installChunkReloadGuard } from '@/bootstrap/chunk-reload';
+import { installStaleBundleCheck } from '@/bootstrap/stale-bundle-check';
 import { installSwUpdateHandler } from '@/bootstrap/sw-update';
 
 // Auto-reload on stale chunk 404s after deployment (Vite fires this for modulepreload failures).
@@ -653,6 +712,10 @@ initMetaTags();
 installRuntimeFetchPatch();
 // In web production, route RPC calls through api.worldmonitor.app (Cloudflare edge).
 installWebApiRedirect();
+// Force-reload tabs running a stale bundle (catches the class of bug where
+// users keep a tab open across a wire-shape change). Skips when build-hash
+// is the 'dev' marker.
+installStaleBundleCheck();
 loadDesktopSecrets().catch(() => {});
 
 // Apply stored theme preference before app initialization (safety net for inline script)

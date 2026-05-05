@@ -146,7 +146,7 @@ http.route({
     }
 
     try {
-      const result = await ctx.runMutation(
+      const result = (await ctx.runMutation(
         anyApi.userPreferences!.setPreferences as any,
         {
           variant: body.variant,
@@ -154,10 +154,33 @@ http.route({
           expectedSyncVersion: body.expectedSyncVersion,
           schemaVersion: body.schemaVersion,
         },
+      )) as
+        | { ok: true; syncVersion: number }
+        | { ok: false; reason: "CONFLICT"; actualSyncVersion: number };
+      // PR 3 (post-launch-stabilization): setPreferences now returns a
+      // discriminated result for CONFLICT instead of throwing. Mirror the
+      // wire shape from api/user-prefs.ts (Vercel) so clients see the same
+      // 409 + actualSyncVersion regardless of which `/api/user-prefs` host
+      // they hit.
+      if (result.ok === false) {
+        return new Response(
+          JSON.stringify({
+            error: "CONFLICT",
+            actualSyncVersion: result.actualSyncVersion,
+          }),
+          { status: 409, headers },
+        );
+      }
+      return new Response(
+        JSON.stringify({ syncVersion: result.syncVersion }),
+        { status: 200, headers },
       );
-      return new Response(JSON.stringify(result), { status: 200, headers });
     } catch (err: unknown) {
       const msg = err instanceof Error ? err.message : String(err);
+      // Defensive: keep CONFLICT-throw fallback for the deploy-ordering
+      // window where this http action may run against an older Convex
+      // deployment that still throws. Once both layers have soaked, this
+      // branch is unreachable and can be removed.
       if (msg.includes("CONFLICT")) {
         return new Response(JSON.stringify({ error: "CONFLICT" }), {
           status: 409,
@@ -584,16 +607,30 @@ http.route({
             digestTimezone: typeof body.digestTimezone === "string" ? body.digestTimezone : undefined,
           });
         } catch (err: unknown) {
-          // Translate ConvexError(INCOMPATIBLE_DELIVERY) into 400 with the message
-          // so the API path can pass it through to the UI for inline rendering.
-          // Do NOT swallow as a generic 500 — the user needs the helper text.
+          // Translate structured ConvexError codes into machine-readable HTTP
+          // responses so the UI can route to inline helper text (400) or to
+          // the upgrade flow (402). Do NOT swallow as a generic 500 — the
+          // client needs the structured `error` field to render the right
+          // surface.
           const data = (err as { data?: unknown } | undefined)?.data;
-          if (data && typeof data === "object" && (data as { code?: string }).code === "INCOMPATIBLE_DELIVERY") {
-            const errPayload = data as { code: string; message?: string };
-            return new Response(
-              JSON.stringify({ error: errPayload.code, message: errPayload.message ?? "" }),
-              { status: 400, headers: { "Content-Type": "application/json" } },
-            );
+          if (data && typeof data === "object") {
+            const errPayload = data as { code?: string; message?: string };
+            if (errPayload.code === "INCOMPATIBLE_DELIVERY") {
+              return new Response(
+                JSON.stringify({ error: errPayload.code, message: errPayload.message ?? "" }),
+                { status: 400, headers: { "Content-Type": "application/json" } },
+              );
+            }
+            if (errPayload.code === "PRO_REQUIRED") {
+              // 402 Payment Required — the canonical HTTP status for
+              // paywall-gated content. Client reads `error: "PRO_REQUIRED"`
+              // to route to the upgrade flow rather than show a generic
+              // failure toast.
+              return new Response(
+                JSON.stringify({ error: errPayload.code, message: errPayload.message ?? "" }),
+                { status: 402, headers: { "Content-Type": "application/json" } },
+              );
+            }
           }
           throw err;
         }
@@ -798,8 +835,13 @@ http.route({
     );
 
     if (result) {
-      // Fire-and-forget: update lastUsedAt (don't await, don't block response)
-      void ctx.runMutation((internal as any).apiKeys.touchKeyLastUsed, { keyId: result.id });
+      try {
+        await ctx.scheduler.runAfter(0, (internal as any).apiKeys.touchKeyLastUsed, { keyId: result.id });
+      } catch (err) {
+        // sentry-coverage-ok: re-throwing here would 500 the gateway, which coerces to null
+        // and stamps a 60s negative-cache sentinel for a valid key. lastUsedAt is best-effort telemetry.
+        console.warn("[validate-api-key] touchKeyLastUsed schedule failed:", err instanceof Error ? err.message : String(err));
+      }
     }
 
     return new Response(JSON.stringify(result), {

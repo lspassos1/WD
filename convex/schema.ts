@@ -213,7 +213,132 @@ export default defineSchema({
     lastRunStatus: v.optional(v.string()),
     lastRunAt: v.optional(v.number()),
     lastRunError: v.optional(v.string()),
+    // Lease for the in-flight cron run. Set atomically by `_claimTierForRun`
+    // BEFORE the runner makes any external side effects (assignAndExportWave,
+    // createProLaunchBroadcast, sendProLaunchBroadcast). Cleared by
+    // `_recordWaveSent` (success), `_recordRunOutcome` (failure for the
+    // owning runId), `recoverFromPartialFailure` (operator), or
+    // `forceReleaseLease` (operator, last-resort). Two overlapping cron runs
+    // both attempting `_claimTierForRun` will see a lease already held and
+    // exit before any duplicate emails go out. There is NO automatic
+    // staleness override — long-running side effects (large waves) must not
+    // be racable just because they exceed an arbitrary clock; recovery from
+    // a genuinely-stuck lease is operator-only via `forceReleaseLease`.
+    pendingRunId: v.optional(v.string()),
+    pendingRunStartedAt: v.optional(v.number()),
+    // Per-step progress markers persisted by the in-flight run AFTER each
+    // external action succeeds. Lets `recoverFromPartialFailure` recover
+    // without operator-supplied metadata when the action dies between steps
+    // (e.g. Convex action timeout, OOM) before the catch can record
+    // partial-failure. Cleared on successful `_recordWaveSent` and on
+    // `recoverFromPartialFailure` completion.
+    pendingWaveLabel: v.optional(v.string()),
+    pendingSegmentId: v.optional(v.string()),
+    pendingAssigned: v.optional(v.number()),
+    pendingExportAt: v.optional(v.number()),
+    pendingBroadcastId: v.optional(v.string()),
+    pendingBroadcastAt: v.optional(v.number()),
   }).index("by_key", ["key"]),
+
+  // ────────────────────────────────────────────────────────────────────────
+  // Plan 2026-04-29 (post-launch-stabilization PR 2): wave-loading state
+  // machine. Replaces the monolithic `assignAndExportWave` action — which
+  // hits the Convex 10-min runtime budget at ~1500 contacts — with a
+  // multi-step pipeline (pick → push-batch×N → finalize) that fits within
+  // budget at any wave size.
+  //
+  // `waveRuns` is the per-run state row. `wavePickedContacts` is the
+  // per-contact tri-state row that the push pipeline drains in batches.
+  // Together they are the durable source of truth for an in-flight wave;
+  // `broadcastRampConfig.lastWave*` is updated atomically by
+  // `_finalizeWaveRun` only when the whole pipeline succeeds.
+  //
+  // See `convex/broadcast/waveRuns.ts` for the function-shape rules
+  // (internalAction = external I/O, internalMutation = DB writes only)
+  // and the lease/recovery semantics.
+  // ────────────────────────────────────────────────────────────────────────
+  waveRuns: defineTable({
+    // Unique per pickWave call. Same string is set as
+    // `broadcastRampConfig.pendingRunId` for lease coordination — the
+    // existing rampRunner lease pattern. Cleared on `_finalizeWaveRun`
+    // success or operator recovery (`discardWaveRun`).
+    runId: v.string(),
+    waveLabel: v.string(),
+    segmentId: v.optional(v.string()),
+    // Lifecycle:
+    //   picking            → reservoir-sampling + creating segment + persisting picked rows
+    //   segment-created    → ready for first pushBatchAction
+    //   pushing            → at least one batch in flight; remaining `pending` rows
+    //   broadcast-created  → all contacts pushed; broadcast object exists in Resend; send may have failed
+    //   sent               → terminal success — broadcastRampConfig advanced atomically by _finalizeWaveRun
+    //   failed             → terminal-by-failure; substatus carries reason and dictates which operator
+    //                        recovery mutation applies (resumeStalledWaveRun, resumeFinalizeWaveRun,
+    //                        markFinalizeRecovered, or discardWaveRun)
+    status: v.union(
+      v.literal("picking"),
+      v.literal("segment-created"),
+      v.literal("pushing"),
+      v.literal("broadcast-created"),
+      v.literal("sent"),
+      v.literal("failed"),
+    ),
+    // Operator-supplied count from `pickWaveAction` args. May exceed pool —
+    // the actual picked count is in `totalCount`, with `underfilled=true`.
+    requestedCount: v.number(),
+    // = picked.length after reservoir sampling. Finalization gates on
+    // "zero `pending` rows for this runId", NOT on pushedCount === totalCount —
+    // failed contacts are tolerated up to the 5% threshold.
+    totalCount: v.number(),
+    underfilled: v.boolean(),
+    pushedCount: v.number(),
+    failedCount: v.number(),
+    batchSize: v.number(),
+    // Updated by every successful batch + by lease-revalidating recovery
+    // mutations. Used (with createdAt/updatedAt fallback) by `runDailyRamp`'s
+    // 15-min in-flight guard to distinguish "actively running" from "stalled
+    // — needs operator intervention".
+    lastBatchAt: v.optional(v.number()),
+    broadcastId: v.optional(v.string()),
+    // Discriminator for `failed` status. Drives operator recovery routing:
+    //   'create-broadcast-failed'      → segment ready, no broadcast yet → resumeFinalizeWaveRun retries create
+    //   'send-broadcast-failed'        → segment + broadcast ready, send failed → resumeFinalizeWaveRun({confirmedNotSent:true}) OR markFinalizeRecovered
+    //   'discarded-by-operator'        → discardWaveRun ran; cleanup cron prunes the rows
+    //   'batch-failure-rate-exceeded'  → push-side >5% failures → discardWaveRun (transient retry won't help)
+    //   'empty-pool'                   → pickWave found zero unstamped registrations → terminal no-op
+    //   'segment-create-failed'        → Resend createSegment failed → operator inspects + discards
+    //   'persist-failed'               → mid-loop _persistPickedBatch failed → operator inspects + discards
+    failureSubstatus: v.optional(v.string()),
+    error: v.optional(v.string()),
+    createdAt: v.number(),
+    updatedAt: v.number(),
+  })
+    .index("by_runId", ["runId"])
+    .index("by_status", ["status"]),
+
+  // Per-contact tri-state row written by `_persistPickedBatch` during pick
+  // and patched atomically by `_markContactPushed` / `_markContactFailed`
+  // during push. The CAS guard on those mutations (no-op unless
+  // status==='pending') makes them idempotent under overlapping
+  // pushBatchAction invocations or operator-resume-while-original-still-running.
+  //
+  // Rows are NOT deleted synchronously on `discardWaveRun` — the daily
+  // `cleanupDiscardedWavePickedContactsAction` cron prunes them in 500-row
+  // batches to avoid hitting Convex's per-mutation write limits on bulk
+  // deletion of up to 25k rows.
+  wavePickedContacts: defineTable({
+    runId: v.string(),
+    normalizedEmail: v.string(),
+    status: v.union(
+      v.literal("pending"),
+      v.literal("pushed"),
+      v.literal("failed"),
+    ),
+    pushedAt: v.optional(v.number()),
+    failedAt: v.optional(v.number()),
+    failedReason: v.optional(v.string()),
+  })
+    .index("by_runId", ["runId"])
+    .index("by_runId_status", ["runId", "status"]),
 
   // Phase 9 / Todo #223 — Clerk-user referral codes.
   // The `registrations.referralCode` column uses a 6-char hash of

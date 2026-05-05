@@ -25,6 +25,7 @@ interface DodoCustomer {
 interface DodoSubscriptionData {
   subscription_id: string;
   product_id: string;
+  status?: string;
   customer?: DodoCustomer;
   previous_billing_date?: string | number | Date;
   next_billing_date?: string | number | Date;
@@ -723,6 +724,64 @@ export async function handleSubscriptionExpired(
 }
 
 /**
+ * Handles `subscription.updated` -- Dodo's catch-all "any field changed"
+ * event (per their webhook docs, this fires for real-time sync without
+ * polling). We dispatch by the payload's `status` field to reuse the
+ * dedicated lifecycle handlers AND inherit their policy invariants:
+ *
+ *   - paid-through cancellation: `handleSubscriptionCancelled` preserves
+ *     entitlement until `currentPeriodEnd`, NOT immediate revocation. A
+ *     `subscription.updated` carrying `status='cancelled'` mid-period
+ *     therefore does NOT downgrade until the period ends — same behavior
+ *     as a dedicated `subscription.cancelled` event.
+ *   - out-of-order protection: each lifecycle handler enforces
+ *     `isNewerEvent(existing.updatedAt, eventTimestamp)`, so a delayed
+ *     `subscription.updated` for an old state is rejected.
+ *
+ * Unknown statuses fall to a defensive recompute path: patch the row's
+ * rawPayload + updatedAt so we don't lose the event, recompute the
+ * entitlement, and console.error so ops can decide if a new dedicated
+ * handler is needed.
+ */
+export async function handleSubscriptionUpdated(
+  ctx: MutationCtx,
+  data: DodoSubscriptionData,
+  eventTimestamp: number,
+): Promise<void> {
+  const status = (data.status ?? "").toString();
+  switch (status) {
+    case "active":
+      return handleSubscriptionActive(ctx, data, eventTimestamp);
+    case "on_hold":
+      return handleSubscriptionOnHold(ctx, data, eventTimestamp);
+    case "cancelled":
+      return handleSubscriptionCancelled(ctx, data, eventTimestamp);
+    case "expired":
+      return handleSubscriptionExpired(ctx, data, eventTimestamp);
+    default: {
+      console.error(
+        `[handleSubscriptionUpdated] unhandled status="${status}" sub=${data.subscription_id}; ` +
+        `recomputing entitlement defensively. Add a dedicated dispatch case if this status starts ` +
+        `appearing regularly.`,
+      );
+      const existing = await ctx.db
+        .query("subscriptions")
+        .withIndex("by_dodoSubscriptionId", (q) =>
+          q.eq("dodoSubscriptionId", data.subscription_id),
+        )
+        .unique();
+      if (existing && isNewerEvent(existing.updatedAt, eventTimestamp)) {
+        await ctx.db.patch(existing._id, {
+          rawPayload: data,
+          updatedAt: eventTimestamp,
+        });
+        await recomputeEntitlementFromAllSubs(ctx, existing.userId, eventTimestamp);
+      }
+    }
+  }
+}
+
+/**
  * Handles `payment.succeeded`, `payment.failed`, `refund.succeeded`, and `refund.failed`.
  *
  * Records a payment event row for audit trail. Does not alter subscription state —
@@ -756,6 +815,113 @@ export async function handlePaymentOrRefundEvent(
     rawPayload: data,
     occurredAt: eventTimestamp,
   });
+
+  // Refund-without-prior-cancellation alert. Dodo Payments treats refund
+  // and subscription cancellation as separate operations — refunding a
+  // subscription payment does NOT cancel the subscription. Their own docs
+  // (and the SaaS Refund Management blog) recommend "cancel first, then
+  // refund." When operators forget the cancel step, the user keeps Pro
+  // access until manual cleanup (we hit this 2026-04-29 with
+  // nokzbtl@gmail.com — the entitlement only downgraded after the operator
+  // manually cancelled on Dodo).
+  //
+  // Alert-only (per ops decision) — do NOT auto-revoke. Auto-revoke would
+  // hide the operator-process gap. Surface it loudly via Sentry instead so
+  // it gets noticed within minutes, not days.
+  if (eventType === "refund.succeeded" && data.subscription_id) {
+    const sub = await ctx.db
+      .query("subscriptions")
+      .withIndex("by_dodoSubscriptionId", (q) =>
+        q.eq("dodoSubscriptionId", data.subscription_id ?? ""),
+      )
+      .unique();
+    const decision = classifyRefundAlert({
+      subStatus: sub?.status,
+      subCancelledAt: sub?.cancelledAt,
+      subRawPayload: sub?.rawPayload,
+      subUserId: sub?.userId,
+      refundAmount: data.total_amount ?? data.amount ?? 0,
+    });
+    if (decision.kind === "alert") {
+      console.error(
+        `[refund-alert] full refund without prior cancellation: ` +
+        `subId=${data.subscription_id} userId=${decision.userId} ` +
+        `refund=${decision.refundAmount} subAmount=${decision.subAmount} ` +
+        `paymentId=${data.payment_id}. Operator likely forgot to cancel ` +
+        `before refund — entitlement remains active until manual cleanup.`,
+      );
+      // Convex auto-Sentry captures console.error.
+    } else if (decision.kind === "warn-amount-unknown") {
+      // rawPayload missing recurring_pre_tax_amount — can't classify
+      // amount comparison. Don't false-positive; log warn so we know the
+      // case exists.
+      console.warn(
+        `[refund-alert] refund on active sub but cannot classify amount: ` +
+        `subId=${data.subscription_id} userId=${decision.userId} ` +
+        `refund=${decision.refundAmount} (rawPayload.recurring_pre_tax_amount missing)`,
+      );
+    }
+  }
+}
+
+/**
+ * Pure helper exported for unit tests. Decides whether a `refund.succeeded`
+ * event on a subscription warrants a Sentry alert.
+ *
+ * The decision is intentionally tri-state:
+ *   - 'alert'              → full refund on an active uncancelled sub; ops paged
+ *   - 'warn-amount-unknown' → active sub but rawPayload lacks the price field;
+ *                              don't false-positive, but don't silently drop
+ *   - 'no-op'              → partial refund, already-cancelled sub, no sub, etc.
+ *
+ * `recurring_pre_tax_amount` is NOT a top-level column on the `subscriptions`
+ * schema (verified against schema.ts:286-297) — it only appears in `rawPayload`,
+ * preserved as the Dodo subscription webhook's snake_case payload.
+ */
+export type RefundAlertDecision =
+  | { kind: "alert"; userId: string; refundAmount: number; subAmount: number }
+  | { kind: "warn-amount-unknown"; userId: string; refundAmount: number }
+  | { kind: "no-op"; reason: string };
+
+export function classifyRefundAlert(input: {
+  subStatus: string | undefined;
+  subCancelledAt: number | undefined;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  subRawPayload: any;
+  subUserId: string | undefined;
+  refundAmount: number;
+}): RefundAlertDecision {
+  if (!input.subStatus || !input.subUserId) {
+    return { kind: "no-op", reason: "no-subscription" };
+  }
+  if (input.subStatus !== "active") {
+    return { kind: "no-op", reason: `sub-status-${input.subStatus}` };
+  }
+  if (input.subCancelledAt) {
+    return { kind: "no-op", reason: "already-cancelled" };
+  }
+  const subAmount = typeof input.subRawPayload?.recurring_pre_tax_amount === "number"
+    ? input.subRawPayload.recurring_pre_tax_amount
+    : 0;
+  if (subAmount <= 0) {
+    return {
+      kind: "warn-amount-unknown",
+      userId: input.subUserId,
+      refundAmount: input.refundAmount,
+    };
+  }
+  // 1% tolerance for tax/rounding (e.g. integer-minor-unit currencies where
+  // a 99.7%-of-amount refund is the closest representable full refund).
+  const isFullRefund = input.refundAmount >= subAmount * 0.99;
+  if (!isFullRefund) {
+    return { kind: "no-op", reason: "partial-refund" };
+  }
+  return {
+    kind: "alert",
+    userId: input.subUserId,
+    refundAmount: input.refundAmount,
+    subAmount,
+  };
 }
 
 /**

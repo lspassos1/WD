@@ -262,11 +262,15 @@ export async function atomicPublish(canonicalKey, data, validateFn, ttlSeconds, 
   return { payloadBytes, recordCount: Array.isArray(data) ? data.length : null };
 }
 
-export async function writeFreshnessMetadata(domain, resource, count, source, ttlSeconds) {
+export async function writeFreshnessMetadata(domain, resource, count, source, ttlSeconds, fetchedAtOverride) {
   const { url, token } = getRedisCredentials();
   const metaKey = `seed-meta:${domain}:${resource}`;
   const meta = {
-    fetchedAt: Date.now(),
+    // Default to now; callers that want to mirror an existing canonical
+    // envelope (validate-fail branch in runSeed) pass the canonical's
+    // original fetchedAt so health doesn't lie about freshness — see
+    // readCanonicalEnvelopeMeta() and the skipped-validate path below.
+    fetchedAt: typeof fetchedAtOverride === 'number' ? fetchedAtOverride : Date.now(),
     recordCount: count,
     sourceVersion: source || '',
   };
@@ -275,6 +279,47 @@ export async function writeFreshnessMetadata(domain, resource, count, source, tt
   const metaTtl = Math.max(86400 * 7, ttlSeconds || 0);
   await redisSet(url, token, metaKey, meta, metaTtl);
   return meta;
+}
+
+/**
+ * Read the canonical key's contract-mode envelope meta. Used by runSeed's
+ * validate-fail branch to mirror canonical state into seed-meta instead
+ * of overwriting it with recordCount=0 (which makes /api/health report
+ * EMPTY_DATA when the canonical key still holds last-good data — see
+ * PR #3581 for the production incident).
+ *
+ * Returns the {fetchedAt, recordCount, sourceVersion} block when canonicalKey
+ * is contract-mode (envelope dual-write) AND has a valid recordCount > 0.
+ * Returns null for legacy (bare-shape) keys, missing keys, parse errors,
+ * or zero envelopes — caller falls back to its existing default behavior.
+ *
+ * Defensive: any read/parse error → null. No throws bubble up.
+ */
+export async function readCanonicalEnvelopeMeta(canonicalKey) {
+  try {
+    const { url, token } = getRedisCredentials();
+    const resp = await fetch(`${url}/get/${encodeURIComponent(canonicalKey)}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(5_000),
+    });
+    if (!resp.ok) return null;
+    const data = await resp.json();
+    if (!data || !data.result) return null;
+    let parsed;
+    try { parsed = JSON.parse(data.result); } catch { return null; }
+    if (!parsed || typeof parsed !== 'object') return null;
+    const seed = parsed._seed;
+    if (!seed || typeof seed !== 'object') return null;
+    if (typeof seed.fetchedAt !== 'number' || typeof seed.recordCount !== 'number') return null;
+    if (seed.recordCount <= 0) return null;
+    return {
+      fetchedAt: seed.fetchedAt,
+      recordCount: seed.recordCount,
+      sourceVersion: typeof seed.sourceVersion === 'string' ? seed.sourceVersion : '',
+    };
+  } catch {
+    return null;
+  }
 }
 
 export async function withRetry(fn, maxRetries = 3, delayMs = 1000) {
@@ -513,6 +558,45 @@ export async function imfFetchJson(url, proxyAuth) {
 // ---------------------------------------------------------------------------
 const IMF_SDMX_BASE = 'https://api.imf.org/external/sdmx/3.0';
 
+/**
+ * Normalize an SDMX 3.0 monthly period from `YYYY-MMM` (the on-the-wire
+ * shape, e.g. `2026-M03`) to ISO `YYYY-MM` so downstream date math —
+ * `period.split('-')`, `parseInt(month, 10)`, key comparisons — works
+ * without special-casing. The M-prefix silently corrupts these
+ * computations: `parseInt("M03", 10)` returns NaN, so 12-month delta
+ * lookups against `byMonth[priorMonth]` always miss.
+ *
+ * Other SDMX 3.0 frequencies pass through unchanged:
+ *   - Annual:    `YYYY`               (e.g. `2024`) — used by WEO/FM
+ *   - Quarterly: `YYYY-Q1..Q4`        (e.g. `2024-Q3`) — sortable as-is
+ *   - Daily:     `YYYY-MM-DD`         (e.g. `2024-03-15`) — used by ECB
+ *   - Monthly:   `YYYY-MMM` → YYYY-MM (e.g. `2026-M03` → `2026-03`)
+ *
+ * Future monthly/quarterly SDMX consumers MUST call this at ingest
+ * (right after reading `timeValues[parseInt(obsKey, 10)]`) so callers
+ * downstream can keep using simple string comparisons and ISO splits.
+ *
+ * @param {string|null|undefined} period
+ * @returns {string|null|undefined} Normalized period (or input unchanged for falsy/non-string)
+ */
+export function normalizeSdmxPeriod(period) {
+  if (typeof period !== 'string') return period;
+  return period.replace(/-M(\d{2})$/, '-$1');
+}
+
+/**
+ * IMF WEO/FM annual indicator fetcher. Hardcoded to annual frequency by URL
+ * construction (`*.${indicator}.A`) — period values come back as bare year
+ * strings (`"2024"`), so no SDMX-period normalization is required here.
+ *
+ * NOTE for future extensions: if you need IMF monthly or quarterly data
+ * (e.g. IRFCL, IFS, BOP), do NOT bolt frequency onto this helper — the
+ * dimension layout differs (e.g. IRFCL is 4-dim COUNTRY.INDICATOR.SECTOR.FREQUENCY,
+ * not WEO's 2-dim COUNTRY.INDICATOR). Roll a custom fetch and call
+ * `normalizeSdmxPeriod()` on every period before storing it as a key.
+ * See `scripts/seed-gold-cb-reserves.mjs::fetchIrfclMonthlySeries` for the
+ * canonical monthly pattern.
+ */
 export async function imfSdmxFetchIndicator(indicator, { database = 'WEO', years } = {}) {
   const agencyMap = { WEO: 'IMF.RES', FM: 'IMF.FAD' };
   const agency = agencyMap[database] || 'IMF.RES';
@@ -1019,8 +1103,42 @@ export async function runSeed(domain, resource, canonicalKey, fetchFn, opts = {}
         // Write seed-meta even when data is empty so health can distinguish
         // "seeder ran but nothing to publish" from "seeder stopped" (quiet-
         // period feeds: news, events, sparse indicators).
-        await writeFreshnessMetadata(domain, resource, 0, opts.sourceVersion, ttlSeconds);
-        console.log(`  SKIPPED: validation failed (empty data) — seed-meta refreshed, existing cache TTL extended`);
+        //
+        // BUT — when the canonical key still holds last-good contract-mode
+        // data with recordCount > 0, mirror its (fetchedAt, recordCount)
+        // into seed-meta instead of writing zero. This keeps /api/health
+        // reporting an accurate count when validateFn rejects a transient
+        // upstream blip (e.g. WB late-reporter variation that drops a
+        // resilience indicator from 153 → 149 countries when the floor was
+        // 150 — production incident 2026-05-03 for resilience:power-losses
+        // where canonical had 216 countries but seed-meta got overwritten
+        // with 0 → EMPTY_DATA). The mirrored fetchedAt is canonical's
+        // ORIGINAL fetch time, NOT now, so STALE_SEED still fires naturally
+        // once the canonical data ages past maxStaleMin — preserving the
+        // strict-floor honesty WITHOUT punishing a transient blip with a
+        // misleading zero.
+        //
+        // Falls back to writing 0 (legacy quiet-period behavior) when:
+        //   - canonical key is missing
+        //   - canonical envelope is malformed / legacy bare shape
+        //   - canonical envelope has recordCount <= 0
+        const canonicalMeta = await readCanonicalEnvelopeMeta(canonicalKey);
+        if (canonicalMeta) {
+          await writeFreshnessMetadata(
+            domain, resource, canonicalMeta.recordCount,
+            canonicalMeta.sourceVersion || opts.sourceVersion,
+            ttlSeconds,
+            canonicalMeta.fetchedAt,
+          );
+          console.log(
+            `  SKIPPED: validation failed (empty/partial fetch) — seed-meta mirrors canonical ` +
+            `(fetchedAt=${new Date(canonicalMeta.fetchedAt).toISOString()}, recordCount=${canonicalMeta.recordCount}); ` +
+            `existing cache TTL extended`,
+          );
+        } else {
+          await writeFreshnessMetadata(domain, resource, 0, opts.sourceVersion, ttlSeconds);
+          console.log(`  SKIPPED: validation failed (empty data) — seed-meta refreshed (recordCount=0), existing cache TTL extended`);
+        }
       }
       console.log(`\n=== Done (${Math.round(durationMs)}ms, no write) ===`);
       await releaseLock(`${domain}:${resource}`, runId);
